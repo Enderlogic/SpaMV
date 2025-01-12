@@ -1,2 +1,0 @@
-  0%|          | 0/500 [00:00<?, ?it/s]/Users/ender/Library/CloudStorage/OneDrive-HongKongBaptistUniversity/postdoc/SpaMV/SpaMV/layers.py:44: UserWarning: Implicit dimension choice for softmax has been deprecated. Change the call to include dim=X as an argument.
-  return F.softmax(self.fc2(hidden))

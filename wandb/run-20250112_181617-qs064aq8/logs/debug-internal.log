@@ -1,8 +1,0 @@
-{"time":"2025-01-12T18:16:17.915835+08:00","level":"INFO","msg":"using version","core version":"0.19.1"}
-{"time":"2025-01-12T18:16:17.915868+08:00","level":"INFO","msg":"created symlink","path":"/Users/ender/Library/CloudStorage/OneDrive-HongKongBaptistUniversity/postdoc/SpaMV/wandb/run-20250112_181617-qs064aq8/logs/debug-core.log"}
-{"time":"2025-01-12T18:16:18.023167+08:00","level":"INFO","msg":"created new stream","id":"qs064aq8"}
-{"time":"2025-01-12T18:16:18.023236+08:00","level":"INFO","msg":"handler: started","stream_id":"qs064aq8"}
-{"time":"2025-01-12T18:16:18.023256+08:00","level":"INFO","msg":"writer: Do: started","stream_id":"qs064aq8"}
-{"time":"2025-01-12T18:16:18.023244+08:00","level":"INFO","msg":"stream: started","id":"qs064aq8"}
-{"time":"2025-01-12T18:16:18.023265+08:00","level":"INFO","msg":"sender: started","stream_id":"qs064aq8"}
-{"time":"2025-01-12T18:16:18.338665+08:00","level":"INFO","msg":"Starting system monitor"}
