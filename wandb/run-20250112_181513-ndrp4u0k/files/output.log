@@ -1,0 +1,175 @@
+  0%|          | 0/500 [00:00<?, ?it/s]Traceback (most recent call last):
+1 0
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/poutine/trace_messenger.py", line 191, in __call__
+    ret = self.fn(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/poutine/messenger.py", line 32, in _context_wrap
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/poutine/messenger.py", line 32, in _context_wrap
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/ender/Library/CloudStorage/OneDrive-HongKongBaptistUniversity/postdoc/SpaMV/SpaMV/model.py", line 172, in model
+    pyro.sample("recon_{}_from_{}".format(j, i), dist.ZeroInflatedNegativeBinomial(x_tilde,
+                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/distributions/distribution.py", line 26, in __call__
+    return super().__call__(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ender/Library/CloudStorage/OneDrive-HongKongBaptistUniversity/postdoc/SpaMV/SpaMV/dist.py", line 127, in __init__
+    mu, theta, zi_logits = broadcast_all(mu, theta, zi_logits)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/torch/distributions/utils.py", line 54, in broadcast_all
+    return torch.broadcast_tensors(*values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/torch/functional.py", line 77, in broadcast_tensors
+    return _VF.broadcast_tensors(tensors)  # type: ignore[attr-defined]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: The size of tensor a (31) must match the size of tensor b (3000) at non-singleton dimension 1
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/Applications/PyCharm.app/Contents/plugins/python-ce/helpers/pydev/pydevd.py", line 1570, in _exec
+    pydev_imports.execfile(file, globals, locals)  # execute the script
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Applications/PyCharm.app/Contents/plugins/python-ce/helpers/pydev/_pydev_imps/_pydev_execfile.py", line 18, in execfile
+    exec(compile(contents+"\n", file, 'exec'), glob, loc)
+  File "/Users/ender/Library/CloudStorage/OneDrive-HongKongBaptistUniversity/postdoc/SpaMV/main.py", line 104, in <module>
+    model.train(min_epochs=100, max_epochs=args.epochs, min_kl=args.beta, max_kl=args.beta,
+  File "/Users/ender/Library/CloudStorage/OneDrive-HongKongBaptistUniversity/postdoc/SpaMV/SpaMV/spamv.py", line 95, in train
+    loss = loss_fn(self.model.model, self.model.guide)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ender/Library/CloudStorage/OneDrive-HongKongBaptistUniversity/postdoc/SpaMV/SpaMV/spamv.py", line 92, in <lambda>
+    loss_fn = lambda model, guide: TraceMeanField_ELBO(num_particles=1).differentiable_loss(
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/infer/trace_elbo.py", line 121, in differentiable_loss
+    for model_trace, guide_trace in self._get_traces(model, guide, args, kwargs):
+                                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/infer/elbo.py", line 237, in _get_traces
+    yield self._get_trace(model, guide, args, kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/infer/trace_mean_field_elbo.py", line 82, in _get_trace
+    model_trace, guide_trace = super()._get_trace(model, guide, args, kwargs)
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/infer/trace_elbo.py", line 57, in _get_trace
+    model_trace, guide_trace = get_importance_trace(
+                               ^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/infer/enum.py", line 65, in get_importance_trace
+    model_trace = poutine.trace(
+                  ^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/poutine/trace_messenger.py", line 216, in get_trace
+    self(*args, **kwargs)
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/poutine/trace_messenger.py", line 198, in __call__
+    raise exc from e
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/poutine/trace_messenger.py", line 191, in __call__
+    ret = self.fn(*args, **kwargs)
+          ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/poutine/messenger.py", line 32, in _context_wrap
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/poutine/messenger.py", line 32, in _context_wrap
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/ender/Library/CloudStorage/OneDrive-HongKongBaptistUniversity/postdoc/SpaMV/SpaMV/model.py", line 172, in model
+    pyro.sample("recon_{}_from_{}".format(j, i), dist.ZeroInflatedNegativeBinomial(x_tilde,
+                                                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/pyro/distributions/distribution.py", line 26, in __call__
+    return super().__call__(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/ender/Library/CloudStorage/OneDrive-HongKongBaptistUniversity/postdoc/SpaMV/SpaMV/dist.py", line 127, in __init__
+    mu, theta, zi_logits = broadcast_all(mu, theta, zi_logits)
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/torch/distributions/utils.py", line 54, in broadcast_all
+    return torch.broadcast_tensors(*values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/opt/anaconda3/envs/scTM/lib/python3.12/site-packages/torch/functional.py", line 77, in broadcast_tensors
+    return _VF.broadcast_tensors(tensors)  # type: ignore[attr-defined]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: The size of tensor a (31) must match the size of tensor b (3000) at non-singleton dimension 1
+                                 Trace Shapes:
+                                  Param Sites:
+                  spamv$$$disp_0_unconstrained          31
+         spamv$$$zp_aux_logstd_0_unconstrained          32
+                  spamv$$$disp_1_unconstrained        3000
+         spamv$$$zp_aux_logstd_1_unconstrained          32
+                spamv$$$zs_encoder_0.conv1.att 1    1  128
+               spamv$$$zs_encoder_0.conv1.bias         128
+       spamv$$$zs_encoder_0.conv1.lin_l.weight    128   31
+         spamv$$$zs_encoder_0.conv1.lin_l.bias         128
+       spamv$$$zs_encoder_0.conv1.lin_r.weight    128   31
+         spamv$$$zs_encoder_0.conv1.lin_r.bias         128
+spamv$$$zs_encoder_0.batch_norm1.module.weight         128
+  spamv$$$zs_encoder_0.batch_norm1.module.bias         128
+                spamv$$$zs_encoder_0.conv2.att 1    1   64
+               spamv$$$zs_encoder_0.conv2.bias          64
+       spamv$$$zs_encoder_0.conv2.lin_l.weight     64  128
+         spamv$$$zs_encoder_0.conv2.lin_l.bias          64
+       spamv$$$zs_encoder_0.conv2.lin_r.weight     64  128
+         spamv$$$zs_encoder_0.conv2.lin_r.bias          64
+                spamv$$$zp_encoder_0.conv1.att 1    1  128
+               spamv$$$zp_encoder_0.conv1.bias         128
+       spamv$$$zp_encoder_0.conv1.lin_l.weight    128   31
+         spamv$$$zp_encoder_0.conv1.lin_l.bias         128
+       spamv$$$zp_encoder_0.conv1.lin_r.weight    128   31
+         spamv$$$zp_encoder_0.conv1.lin_r.bias         128
+spamv$$$zp_encoder_0.batch_norm1.module.weight         128
+  spamv$$$zp_encoder_0.batch_norm1.module.bias         128
+                spamv$$$zp_encoder_0.conv2.att 1    1   64
+               spamv$$$zp_encoder_0.conv2.bias          64
+       spamv$$$zp_encoder_0.conv2.lin_l.weight     64  128
+         spamv$$$zp_encoder_0.conv2.lin_l.bias          64
+       spamv$$$zp_encoder_0.conv2.lin_r.weight     64  128
+         spamv$$$zp_encoder_0.conv2.lin_r.bias          64
+                  spamv$$$decoder_0.fc1.weight    128   64
+                    spamv$$$decoder_0.fc1.bias         128
+                  spamv$$$decoder_0.fc2.weight     31  128
+                    spamv$$$decoder_0.fc2.bias          31
+                spamv$$$zs_encoder_1.conv1.att 1    1  128
+               spamv$$$zs_encoder_1.conv1.bias         128
+       spamv$$$zs_encoder_1.conv1.lin_l.weight    128 3000
+         spamv$$$zs_encoder_1.conv1.lin_l.bias         128
+       spamv$$$zs_encoder_1.conv1.lin_r.weight    128 3000
+         spamv$$$zs_encoder_1.conv1.lin_r.bias         128
+spamv$$$zs_encoder_1.batch_norm1.module.weight         128
+  spamv$$$zs_encoder_1.batch_norm1.module.bias         128
+                spamv$$$zs_encoder_1.conv2.att 1    1   64
+               spamv$$$zs_encoder_1.conv2.bias          64
+       spamv$$$zs_encoder_1.conv2.lin_l.weight     64  128
+         spamv$$$zs_encoder_1.conv2.lin_l.bias          64
+       spamv$$$zs_encoder_1.conv2.lin_r.weight     64  128
+         spamv$$$zs_encoder_1.conv2.lin_r.bias          64
+                spamv$$$zp_encoder_1.conv1.att 1    1  128
+               spamv$$$zp_encoder_1.conv1.bias         128
+       spamv$$$zp_encoder_1.conv1.lin_l.weight    128 3000
+         spamv$$$zp_encoder_1.conv1.lin_l.bias         128
+       spamv$$$zp_encoder_1.conv1.lin_r.weight    128 3000
+         spamv$$$zp_encoder_1.conv1.lin_r.bias         128
+spamv$$$zp_encoder_1.batch_norm1.module.weight         128
+  spamv$$$zp_encoder_1.batch_norm1.module.bias         128
+                spamv$$$zp_encoder_1.conv2.att 1    1   64
+               spamv$$$zp_encoder_1.conv2.bias          64
+       spamv$$$zp_encoder_1.conv2.lin_l.weight     64  128
+         spamv$$$zp_encoder_1.conv2.lin_l.bias          64
+       spamv$$$zp_encoder_1.conv2.lin_r.weight     64  128
+         spamv$$$zp_encoder_1.conv2.lin_r.bias          64
+                  spamv$$$decoder_1.fc1.weight    128   64
+                    spamv$$$decoder_1.fc1.bias         128
+                  spamv$$$decoder_1.fc2.weight   3000  128
+                    spamv$$$decoder_1.fc2.bias        3000
+            spamv$$$decoder_1.zi_logits.weight   3000  128
+              spamv$$$decoder_1.zi_logits.bias        3000
+                                 Sample Sites:
+                                   sample dist           |
+                                         value   3482    |
+                                     zs_0 dist   3482    |   32
+                                         value   3482    |   32
+                                     zp_0 dist   3482    |   32
+                                         value   3482    |   32
+                                     zs_1 dist   3482    |   32
+                                         value   3482    |   32
+                                     zp_1 dist   3482    |   32
+                                         value   3482    |   32
+                           recon_0_from_0 dist   3482    |   31
+                                         value   3482    |   31
+                           recon_1_from_0 dist   3482    | 3000
+                                         value   3482    | 3000

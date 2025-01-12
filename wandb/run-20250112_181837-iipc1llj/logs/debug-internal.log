@@ -1,0 +1,8 @@
+{"time":"2025-01-12T18:18:37.775613+08:00","level":"INFO","msg":"using version","core version":"0.19.1"}
+{"time":"2025-01-12T18:18:37.775648+08:00","level":"INFO","msg":"created symlink","path":"/Users/ender/Library/CloudStorage/OneDrive-HongKongBaptistUniversity/postdoc/SpaMV/wandb/run-20250112_181837-iipc1llj/logs/debug-core.log"}
+{"time":"2025-01-12T18:18:37.88693+08:00","level":"INFO","msg":"created new stream","id":"iipc1llj"}
+{"time":"2025-01-12T18:18:37.887407+08:00","level":"INFO","msg":"stream: started","id":"iipc1llj"}
+{"time":"2025-01-12T18:18:37.88762+08:00","level":"INFO","msg":"handler: started","stream_id":"iipc1llj"}
+{"time":"2025-01-12T18:18:37.887682+08:00","level":"INFO","msg":"sender: started","stream_id":"iipc1llj"}
+{"time":"2025-01-12T18:18:37.887717+08:00","level":"INFO","msg":"writer: Do: started","stream_id":"iipc1llj"}
+{"time":"2025-01-12T18:18:38.411321+08:00","level":"INFO","msg":"Starting system monitor"}

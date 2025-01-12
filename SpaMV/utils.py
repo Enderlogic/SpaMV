@@ -1,0 +1,318 @@
+import math
+
+import numpy as np
+import pandas as pd
+import torch
+from matplotlib import pyplot as plt
+from scanpy.plotting import embedding
+from scipy.sparse import csr_matrix
+import scanpy as sc
+from sklearn.neighbors import kneighbors_graph
+from torch_geometric.utils import coalesce
+
+
+def construct_graph_by_coordinate(cell_position, device='cpu'):
+    """Constructing spatial neighbor graph according to spatial coordinates."""
+    dist_sort = np.sort(
+        np.unique((cell_position[:, 0] - cell_position[0, 0]) ** 2 + (cell_position[:, 1] - cell_position[0, 1]) ** 2))
+    return torch.tensor([x for xs in [[[j, i] for j in np.where(
+        (cell_position[:, 0] - cell_position[i, 0]) ** 2 + (cell_position[:, 1] - cell_position[i, 1]) ** 2 < dist_sort[
+            2])[0]] for i in range(cell_position.shape[0])] for x in xs], device=device).T
+
+
+def construct_graph_by_feature(adata, n_neighbors=20, mode="connectivity", metric="correlation", device="cpu"):
+    """Constructing feature neighbor graph according to expresss profiles"""
+
+    feature_graph = torch.tensor(
+        kneighbors_graph(adata.obsm['X_pca'], n_neighbors, mode=mode, metric=metric).todense(), device=device)
+
+    return feature_graph.nonzero().t().contiguous()
+
+
+def adjacent_matrix_preprocessing(adata, n_neighbors=20, device="cpu"):
+    """Converting dense adjacent matrix to sparse adjacent matrix"""
+    ######################################## construct spatial graph ########################################
+    edge_index = []
+    for data in adata:
+        edge_index_spatial = construct_graph_by_coordinate(data.obsm['spatial'], device=device)
+
+        ######################################## construct feature graph ########################################
+        edge_index_feature = construct_graph_by_feature(data, n_neighbors=n_neighbors, device=device)
+        edge_index.append(coalesce(torch.cat([edge_index_feature, edge_index_spatial], dim=1)))
+    return edge_index
+
+
+def get_init_bg(x):
+    bg_init = []
+    for data in x:
+        data = data / data.sum(axis=1, keepdims=True)
+        means = data.nanmean(dim=0)
+        bg_init.append((means + 1e-15).log())
+    return bg_init
+
+
+def plot_results(model, adatas, omics_names, zp_dims, zs_dim, folder_path, file_name=None, full=False):
+    topic_prop = model.get_embedding()
+    feature_topics = model.get_feature_by_topic()
+    n_col = max(zp_dims + [zs_dim])
+    fig, axes = plt.subplots(7, n_col, figsize=(n_col * 5, 25))
+    if zs_dim < n_col:
+        for i in range(n_col - zs_dim):
+            for j in range(1 + len(zp_dims)):
+                axes[j, zs_dim + i].axis('off')
+    for i, zp_dim in enumerate(zp_dims):
+        if zp_dim < n_col:
+            for j in range(n_col - zp_dim):
+                for k in range(3 + i * 2, 3 + (i + 1) * 2):
+                    axes[k, zp_dim + j].axis('off')
+    for i in range(zs_dim):
+        topic_name = "Shared topic {}".format(i + 1)
+        adatas[0].obs[topic_name] = topic_prop.iloc[:, i]
+        embedding(adatas[0], color=topic_name, vmax='p99', size=100, show=False, basis='spatial', ax=axes[0, i])
+        for j in range(len(zp_dims)):
+            mrf = feature_topics[j].nlargest(1, topic_prop.columns[i]).index[0]
+            embedding(adatas[j], color=mrf, vmax='p99', basis='spatial', size=100, show=False, ax=axes[1 + j, i],
+                      title=mrf + '\nMost relevant ' + omics_names[j] + ' w.r.t. shared topic {}'.format(i + 1))
+    for i in range(len(zp_dims)):
+        for j in range(zp_dims[i]):
+            topic_name = omics_names[i] + " private topic {}".format(j + 1)
+            adatas[i].obs[topic_name] = topic_prop.iloc[:, zs_dim + sum(zp_dims[:i]) + j]
+            embedding(adatas[i], color=topic_name, vmax='p99', size=100, show=False, basis='spatial',
+                      ax=axes[1 + len(zp_dims) + i * 2, j])
+            mrf = feature_topics[i].nlargest(1, feature_topics[i].columns[j + zs_dim]).index[0]
+            embedding(adatas[i], color=mrf, vmax='p99', size=100, show=False, basis='spatial',
+                      title=mrf + '\nMost relevant ' + omics_names[i] + ' w.r.t. ' + omics_names[
+                          i] + ' private topic {}'.format(j + 1), ax=axes[1 + len(zp_dims) + i * 2 + 1, j])
+    plt.tight_layout()
+    plt.savefig(folder_path + 'v10_2.pdf' if file_name is None else folder_path + file_name)
+
+    # if full:
+    #     for i in range(n_zp_omics1 + n_zs + n_zp_omics2):
+    #         if i < n_zp_omics1:
+    #             embedding(adata,
+    #                       color=[omics_names[0] + " private topic " + str(i + 1)] + beta_omics1.nlargest(8,
+    #                                                                                                      topic_prop.columns[
+    #                                                                                                          i]).index.tolist(),
+    #                       basis='spatial', size=100, show=False, ncols=3, vmax='p99')
+    #             fn = folder_path + omics_names[0] + '_private_topic_' + str(i + 1) + '.pdf'
+    #         elif i < n_zp_omics1 + n_zs:
+    #             embedding(adata,
+    #                       color=["shared topic " + str(i + 1 - n_zp_omics1)] + beta_omics1.nlargest(8,
+    #                                                                                                 topic_prop.columns[
+    #                                                                                                     i]).index.tolist() + beta_omics2.nlargest(
+    #                           8, topic_prop.columns[i]).index.tolist(), basis='spatial', size=100, show=False, ncols=3,
+    #                       vmax='p99')
+    #             fn = folder_path + 'shared_topic_' + str(i + 1 - n_zp_omics1) + '.pdf'
+    #         else:
+    #             embedding(adata, color=[omics_names[1] + " private topic " + str(
+    #                 i + 1 - n_zp_omics1 - n_zs)] + beta_omics2.nlargest(8, topic_prop.columns[i]).index.tolist(),
+    #                       basis='spatial', size=100, show=False, ncols=3, vmax='p99')
+    #             fn = folder_path + omics_names[1] + '_private_topic_' + str(i + 1 - n_zp_omics1 - n_zs) + '.pdf'
+    #         plt.savefig(fn)
+
+
+def ST_preprocess(adata_st, normalize=True, log=True, highly_variable_genes=True, n_top_genes=3000, pca=True,
+                  n_comps=50):
+    adata = adata_st.copy()
+    sc.pp.filter_genes(adata, min_cells=round(adata.n_obs * .05))
+
+    adata.var['mt'] = np.logical_or(adata.var_names.str.startswith('MT-'), adata.var_names.str.startswith('mt-'))
+    adata.var['rb'] = adata.var_names.str.startswith(('RP', 'Rp', 'rp'))
+
+    sc.pp.calculate_qc_metrics(adata, qc_vars=['mt'], inplace=True)
+    mask_cell = adata.obs['pct_counts_mt'] < 100
+    mask_gene = np.logical_and(~adata.var['mt'], ~adata.var['rb'])
+
+    adata = adata[mask_cell, mask_gene]
+    adata = adata[:, (adata.X > 1).sum(0) > adata.n_obs / 100]
+
+    if highly_variable_genes:
+        sc.pp.highly_variable_genes(adata, flavor="seurat_v3", n_top_genes=n_top_genes)
+
+    if normalize:
+        sc.pp.normalize_total(adata, target_sum=1e4)
+
+    if log:
+        sc.pp.log1p(adata)
+
+    if pca:
+        sc.pp.pca(adata, n_comps=n_comps)
+
+    if highly_variable_genes:
+        return adata[:, adata.var.highly_variable]
+    else:
+        return adata
+
+
+def clr_normalize_each_cell(adata, inplace=True):
+    """Normalize count vector for each cell, i.e. for each row of .X"""
+
+    import numpy as np
+    import scipy
+
+    def seurat_clr(x):
+        # TODO: support sparseness
+        s = np.sum(np.log1p(x[x > 0]))
+        exp = np.exp(s / len(x))
+        return np.log1p(x / exp)
+
+    if not inplace:
+        adata = adata.copy()
+
+    # apply to dense or sparse matrix, along axis. returns dense matrix
+    adata.X = np.apply_along_axis(
+        seurat_clr, 1, (adata.X.toarray() if scipy.sparse.issparse(adata.X) else np.array(adata.X))
+    )
+    return adata
+
+
+def log_mean_exp(value, dim=0, keepdim=False):
+    return torch.logsumexp(value, dim, keepdim=keepdim) - math.log(value.size(dim))
+
+
+def mclust_R(adata, num_cluster, modelNames='EEE', used_obsm='emb_pca', random_seed=2025):
+    """\
+    Clustering using the mclust algorithm.
+    The parameters are the same as those in the R package mclust.
+    """
+
+    np.random.seed(random_seed)
+    import rpy2.robjects as robjects
+    robjects.r.library("mclust")
+
+    import rpy2.robjects.numpy2ri
+    rpy2.robjects.numpy2ri.activate()
+    r_random_seed = robjects.r['set.seed']
+    r_random_seed(random_seed)
+    rmclust = robjects.r['Mclust']
+
+    res = rmclust(rpy2.robjects.numpy2ri.numpy2rpy(adata.obsm[used_obsm]), num_cluster, modelNames)
+    mclust_res = np.array(res[-2])
+
+    adata.obs['mclust'] = mclust_res
+    adata.obs['mclust'] = adata.obs['mclust'].astype('int')
+    adata.obs['mclust'] = adata.obs['mclust'].astype('category')
+    return adata
+
+
+def pca(adata, use_reps=None, n_comps=10):
+    """Dimension reduction with PCA algorithm"""
+
+    from sklearn.decomposition import PCA
+    from scipy.sparse.csc import csc_matrix
+    from scipy.sparse.csr import csr_matrix
+    pca = PCA(n_components=n_comps)
+    if use_reps is not None:
+        feat_pca = pca.fit_transform(adata.obsm[use_reps])
+    else:
+        if isinstance(adata.X, csc_matrix) or isinstance(adata.X, csr_matrix):
+            feat_pca = pca.fit_transform(adata.X.toarray())
+        else:
+            feat_pca = pca.fit_transform(adata.X)
+
+    return feat_pca
+
+
+def clustering(adata, n_clusters=7, key='emb', add_key='SpatialGlue', method='mclust', start=0.1, end=3.0,
+               increment=0.01, use_pca=False, n_comps=20):
+    """\
+    Spatial clustering based the latent representation.
+
+    Parameters
+    ----------
+    adata : anndata
+        AnnData object of scanpy package.
+    n_clusters : int, optional
+        The number of clusters. The default is 7.
+    key : string, optional
+        The key of the input representation in adata.obsm. The default is 'emb'.
+    method : string, optional
+        The tool for clustering. Supported tools include 'mclust', 'leiden', and 'louvain'. The default is 'mclust'.
+    start : float
+        The start value for searching. The default is 0.1. Only works if the clustering method is 'leiden' or 'louvain'.
+    end : float
+        The end value for searching. The default is 3.0. Only works if the clustering method is 'leiden' or 'louvain'.
+    increment : float
+        The step size to increase. The default is 0.01. Only works if the clustering method is 'leiden' or 'louvain'.
+    use_pca : bool, optional
+        Whether use pca for dimension reduction. The default is false.
+
+    Returns
+    -------
+    None.
+
+    """
+
+    if use_pca:
+        adata.obsm[key + '_pca'] = pca(adata, use_reps=key, n_comps=n_comps)
+
+    if method == 'mclust':
+        if use_pca:
+            adata = mclust_R(adata, used_obsm=key + '_pca', num_cluster=n_clusters)
+        else:
+            adata = mclust_R(adata, used_obsm=key, num_cluster=n_clusters)
+        adata.obs[add_key] = adata.obs['mclust']
+    elif method == 'leiden':
+        if use_pca:
+            res = search_res(adata, n_clusters, use_rep=key + '_pca', method=method, start=start, end=end,
+                             increment=increment)
+        else:
+            res = search_res(adata, n_clusters, use_rep=key, method=method, start=start, end=end, increment=increment)
+        sc.tl.leiden(adata, random_state=0, resolution=res)
+        adata.obs[add_key] = adata.obs['leiden']
+    elif method == 'louvain':
+        if use_pca:
+            res = search_res(adata, n_clusters, use_rep=key + '_pca', method=method, start=start, end=end,
+                             increment=increment)
+        else:
+            res = search_res(adata, n_clusters, use_rep=key, method=method, start=start, end=end, increment=increment)
+        sc.tl.louvain(adata, random_state=0, resolution=res)
+        adata.obs[add_key] = adata.obs['louvain']
+
+
+def search_res(adata, n_clusters, method='leiden', use_rep='emb', start=0.1, end=3.0, increment=0.01):
+    '''\
+    Searching corresponding resolution according to given cluster number
+
+    Parameters
+    ----------
+    adata : anndata
+        AnnData object of spatial data.
+    n_clusters : int
+        Targetting number of clusters.
+    method : string
+        Tool for clustering. Supported tools include 'leiden' and 'louvain'. The default is 'leiden'.
+    use_rep : string
+        The indicated representation for clustering.
+    start : float
+        The start value for searching.
+    end : float
+        The end value for searching.
+    increment : float
+        The step size to increase.
+
+    Returns
+    -------
+    res : float
+        Resolution.
+
+    '''
+    print('Searching resolution...')
+    label = 0
+    sc.pp.neighbors(adata, n_neighbors=50, use_rep=use_rep)
+    for res in sorted(list(np.arange(start, end, increment)), reverse=True):
+        if method == 'leiden':
+            sc.tl.leiden(adata, random_state=0, resolution=res)
+            count_unique = len(pd.DataFrame(adata.obs['leiden']).leiden.unique())
+            print('resolution={}, cluster number={}'.format(res, count_unique))
+        elif method == 'louvain':
+            sc.tl.louvain(adata, random_state=0, resolution=res)
+            count_unique = len(pd.DataFrame(adata.obs['louvain']).louvain.unique())
+            print('resolution={}, cluster number={}'.format(res, count_unique))
+        if count_unique == n_clusters:
+            label = 1
+            break
+
+    assert label == 1, "Resolution is not found. Please try bigger range or smaller step!."
+
+    return res

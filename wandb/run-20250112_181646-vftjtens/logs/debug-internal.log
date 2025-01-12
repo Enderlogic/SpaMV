@@ -1,0 +1,8 @@
+{"time":"2025-01-12T18:16:46.760201+08:00","level":"INFO","msg":"using version","core version":"0.19.1"}
+{"time":"2025-01-12T18:16:46.76023+08:00","level":"INFO","msg":"created symlink","path":"/Users/ender/Library/CloudStorage/OneDrive-HongKongBaptistUniversity/postdoc/SpaMV/wandb/run-20250112_181646-vftjtens/logs/debug-core.log"}
+{"time":"2025-01-12T18:16:46.86972+08:00","level":"INFO","msg":"created new stream","id":"vftjtens"}
+{"time":"2025-01-12T18:16:46.869773+08:00","level":"INFO","msg":"stream: started","id":"vftjtens"}
+{"time":"2025-01-12T18:16:46.869788+08:00","level":"INFO","msg":"writer: Do: started","stream_id":"vftjtens"}
+{"time":"2025-01-12T18:16:46.869793+08:00","level":"INFO","msg":"sender: started","stream_id":"vftjtens"}
+{"time":"2025-01-12T18:16:46.869835+08:00","level":"INFO","msg":"handler: started","stream_id":"vftjtens"}
+{"time":"2025-01-12T18:16:47.182805+08:00","level":"INFO","msg":"Starting system monitor"}
