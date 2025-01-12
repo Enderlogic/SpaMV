@@ -26,9 +26,9 @@ sc._settings.ScanpyConfig.figdir = '.'
 # Argument to parse
 parser = argparse.ArgumentParser(description='SpaMV Experiment')
 parser.add_argument('--epochs', type=int, default=500)
-parser.add_argument('--n_zp_omics1', type=int, default=10, help='latent modality 1-specific dimensionality')
-parser.add_argument('--n_zp_omics2', type=int, default=10, help='latent modality 2-specific dimensionality')
-parser.add_argument('--n_zs', type=int, default=10, help='latent shared dimensionality')
+parser.add_argument('--zp_dim_omics1', type=int, default=10, help='latent modality 1-specific dimensionality')
+parser.add_argument('--zp_dim_omics2', type=int, default=10, help='latent modality 2-specific dimensionality')
+parser.add_argument('--zs_dim', type=int, default=10, help='latent shared dimensionality')
 parser.add_argument('--heads', type=int, default=1, help='number of heads in GAT')
 parser.add_argument('--hidden_size', type=int, default=256, help='hidden layer size')
 parser.add_argument('--n_neighbors', type=int, default=20, help='number of neighbors in GNN')
@@ -41,7 +41,7 @@ parser.add_argument('--reweight', type=bool, default=False, help='reweight the l
 # Args
 args = parser.parse_args()
 wandb.login()
-root_path = "Data_SpatialGlue/"
+root_path = "Data/"
 device = 'cuda:1' if torch.cuda.is_available() else 'cpu'
 print(device)
 for _, dirs, _ in os.walk(root_path):
