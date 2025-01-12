@@ -101,10 +101,9 @@ for _, dirs, _ in os.walk(root_path):
                 weight_omics1 = adata_omics2.n_vars / adata_omics1.n_vars
 
         run = wandb.init(project=data, config=args,
-                         name=str(args.n_zp_omics1) + '_' + str(args.n_zs) + '_' + str(args.n_zp_omics2) + '_' + str(
-                             args.beta) + '_' + str(args.learning_rate) + '_' + str(args.reweight) + '_' + str(
-                             args.seed) + '_' + str(args.heads) + '_' + str(args.n_neighbors) + '_' + str(
-                             args.interpretable))
+           name=str(args.zp_dim_omics1) + '_' + str(args.zs_dim) + '_' + str(args.zp_dim_omics2) + '_' + str(
+               args.beta) + '_' + str(args.learning_rate) + '_' + str(args.reweight) + '_' + str(args.seed) + '_' + str(
+               args.heads) + '_' + str(args.n_neighbors) + '_' + str(args.interpretable))
         model = SpaMV([adata_omics1, adata_omics2], zs_dim=args.zs_dim,
                       zp_dims=[args.zp_dim_omics1, args.zp_dim_omics2], weights=[weight_omics1, weight_omics2],
                       interpretable=args.interpretable, hidden_size=args.hidden_size, heads=args.heads,
