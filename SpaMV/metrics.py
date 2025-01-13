@@ -3,10 +3,10 @@ from sklearn.neighbors import kneighbors_graph
 import scanpy as sc
 
 def moranI_score(adata, key):
-    sc.pp.neighbors(adata, use_rep='spatial')
-    # g = kneighbors_graph(adata.obsm['spatial'], 6, mode='connectivity', metric='euclidean')
-    # one_hot = get_dummies(adata.obs[key])
-    moranI = sc.metrics.morans_i(adata, obsm=key).mean()
+    # sc.pp.neighbors(adata, use_rep='spatial')
+    g = kneighbors_graph(adata.obsm['spatial'], 6, mode='connectivity', metric='euclidean')
+    one_hot = get_dummies(adata.obs[key])
+    moranI = sc.metrics.morans_i(g, one_hot.values.T).mean()
     return moranI
 
 

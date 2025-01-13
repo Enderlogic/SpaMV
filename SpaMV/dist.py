@@ -84,7 +84,7 @@ def _gamma(theta: torch.Tensor, mu: torch.Tensor) -> Gamma:
     return gamma_d
 
 
-class NegativeBinomial(TorchDistribution):
+class NB(TorchDistribution):
     arg_constraints = {"mu": constraints.positive, "theta": constraints.positive}
     support = constraints.nonnegative
 
@@ -119,7 +119,7 @@ class NegativeBinomial(TorchDistribution):
         return log_nb_positive(value, mu=self.mu, theta=self.theta, eps=self._eps)
 
 
-class ZeroInflatedNegativeBinomial(TorchDistribution):
+class ZINB(TorchDistribution):
     arg_constraints = {"mu": constraints.positive, "theta": constraints.positive}
     support = constraints.nonnegative
 

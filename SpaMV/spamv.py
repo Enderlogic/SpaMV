@@ -49,13 +49,17 @@ class SpaMV:
         else:
             if min(weights) < 0:
                 raise ValueError("all elements in weights must be non-negative")
+        self.weights = weights
         if recon_types is None:
             recon_types = ["nb" for _ in range(len(adatas))]
         else:
             for recon_type in recon_types:
                 if recon_type != "nb" and recon_type != "zinb":
                     raise ValueError("recon_type must be 'nb' or 'zinb'")
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu") if device is None else device
+        self.hidden_size = hidden_size
+        self.heads = heads
+        self.n_neighbors = n_neighbors
+        self.device = torch.device("cuda:1" if torch.cuda.is_available() else "cpu") if device is None else device
 
         self.adatas = adatas
         self.adata_combined = anndata.concat(adatas, join='outer', axis=1)
@@ -80,7 +84,7 @@ class SpaMV:
 
     def train(self, max_epochs=1000, min_epochs=100, learning_rate=0.001, betas=(0.9, 0.999), weight_decay=0, min_kl=1,
               max_kl=1, early_stop=True, patience=20, n_cluster=10, omics_names=None, folder_path=None,
-              result_path=None, reweight=False, test_mode=False):
+              test_mode=False, result=None):
         self.min_kl = min_kl
         self.max_kl = max_kl
         self.max_epochs = max_epochs
@@ -117,6 +121,15 @@ class SpaMV:
                                  file_name='spamv_' + str(epoch + 1) + '.pdf')
                 else:
                     self.adata_combined.obsm['spamv'] = z
+                    self.adata_combined.obsm['zs+zp1'] = z[:, :self.zs_dim + self.zp_dims[0]]
+                    self.adata_combined.obsm['zs+zp2'] = numpy.concatenate(
+                        (z[:, :self.zs_dim], z[:, -self.zp_dims[1]:]),
+                        axis=1)
+                    jaccard1 = jaccard_scores(self.adata_combined, self.adatas[0], 'zs+zp1', 'X_pca')
+                    jaccard2 = jaccard_scores(self.adata_combined, self.adatas[1], 'zs+zp2', 'X_pca')
+                    wandb.log({"jaccard1": jaccard1}, step=epoch)
+                    wandb.log({"jaccard2": jaccard2}, step=epoch)
+                    print("jaccard 1: ", str(jaccard1), "jaccard 2:", str(jaccard2))
                     clustering(self.adata_combined, key='spamv', add_key='spamv', n_clusters=n_cluster,
                                method='mclust', use_pca=True)
                 if 'cluster' in self.adata_combined.obs:
@@ -128,19 +141,27 @@ class SpaMV:
                     ami = adjusted_mutual_info_score(cluster, cluster_learned)
                     hom = homogeneity_score(cluster, cluster_learned)
                     vme = v_measure_score(cluster, cluster_learned)
+                    wandb.log({"ari": ari}, step=epoch)
+                    wandb.log({"mi": mi}, step=epoch)
+                    wandb.log({"nmi": nmi}, step=epoch)
+                    wandb.log({"ami": ami}, step=epoch)
+                    wandb.log({"hom": hom}, step=epoch)
+                    wandb.log({"vme": vme}, step=epoch)
+                    wandb.log({'ave': (ari + mi + nmi + ami + hom + vme) / 6}, step=epoch)
                     print("ari: ", str(ari), "\naverage: ", str((ari + mi + nmi + ami + hom + vme) / 6))
+                    if result is not None:
+                        result.loc[len(result)] = [self.zp_dims[0], self.zs_dim, self.hidden_size, self.heads,
+                                                   self.n_neighbors, self.max_kl, learning_rate,
+                                                   self.weights[0] == self.weights[1], epoch, "ari", ari]
+                        result.loc[len(result)] = [self.zp_dims[0], self.zs_dim, self.hidden_size, self.heads,
+                                                   self.n_neighbors, self.max_kl, learning_rate,
+                                                   self.weights[0] == self.weights[1], epoch, "average",
+                                                   (ari + mi + nmi + ami + hom + vme) / 6]
                 moranI = moranI_score(self.adata_combined, 'spamv')
-                wandb.log({'spamv' + "moran I": moranI}, step=epoch)
-                print('spamv', moranI)
-                self.adata_combined.obsm['zs+zp1'] = z[:, :self.zs_dim + self.zp_dims[0]]
-                self.adata_combined.obsm['zs+zp2'] = numpy.concatenate((z[:, :self.zs_dim], z[:, -self.zp_dims[1]:]),
-                                                                       axis=1)
-                jaccard1 = jaccard_scores(self.adata_combined, self.adatas[0], 'zs+zp1', 'X_pca')
-                jaccard2 = jaccard_scores(self.adata_combined, self.adatas[1], 'zs+zp2', 'X_pca')
-                wandb.log({"jaccard1": jaccard1}, step=epoch)
-                wandb.log({"jaccard2": jaccard2}, step=epoch)
-                print("jaccard 1: ", str(jaccard1), "jaccard 2:", str(jaccard2))
+                wandb.log({"spamv moran I": moranI}, step=epoch)
+                print('moran I', moranI)
                 self.model.train()
+        return result
 
     def _kl_weight(self, iteration):
         kl = self.min_kl + iteration / self.max_epochs * (self.max_kl - self.min_kl)

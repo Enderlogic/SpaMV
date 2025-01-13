@@ -1,4 +1,5 @@
 import math
+import os.path
 
 import numpy as np
 import pandas as pd
@@ -84,7 +85,9 @@ def plot_results(model, adatas, omics_names, zp_dims, zs_dim, folder_path, file_
                       title=mrf + '\nMost relevant ' + omics_names[i] + ' w.r.t. ' + omics_names[
                           i] + ' private topic {}'.format(j + 1), ax=axes[1 + len(zp_dims) + i * 2 + 1, j])
     plt.tight_layout()
-    plt.savefig(folder_path + 'v10_2.pdf' if file_name is None else folder_path + file_name)
+    if not os.path.exists(folder_path):
+        os.makedirs(folder_path)
+    plt.savefig(folder_path + 'spamv.pdf' if file_name is None else folder_path + file_name)
 
     # if full:
     #     for i in range(n_zp_omics1 + n_zs + n_zp_omics2):
@@ -111,10 +114,11 @@ def plot_results(model, adatas, omics_names, zp_dims, zs_dim, folder_path, file_
     #         plt.savefig(fn)
 
 
-def ST_preprocess(adata_st, normalize=True, log=True, highly_variable_genes=True, n_top_genes=3000, pca=True,
-                  n_comps=50):
+def ST_preprocess(adata_st, normalize=True, log=True, prune=False, highly_variable_genes=True, n_top_genes=3000,
+                  pca=True, n_comps=50):
     adata = adata_st.copy()
-    sc.pp.filter_genes(adata, min_cells=round(adata.n_obs * .05))
+    if adata.n_vars > 50000:
+        sc.pp.filter_genes(adata, min_cells=round(adata.n_obs * .05))
 
     adata.var['mt'] = np.logical_or(adata.var_names.str.startswith('MT-'), adata.var_names.str.startswith('mt-'))
     adata.var['rb'] = adata.var_names.str.startswith(('RP', 'Rp', 'rp'))
@@ -124,7 +128,9 @@ def ST_preprocess(adata_st, normalize=True, log=True, highly_variable_genes=True
     mask_gene = np.logical_and(~adata.var['mt'], ~adata.var['rb'])
 
     adata = adata[mask_cell, mask_gene]
-    adata = adata[:, (adata.X > 1).sum(0) > adata.n_obs / 100]
+
+    if prune:
+        adata = adata[:, (adata.X > 1).sum(0) > adata.n_obs / 100]
 
     if highly_variable_genes:
         sc.pp.highly_variable_genes(adata, flavor="seurat_v3", n_top_genes=n_top_genes)

@@ -26,18 +26,18 @@ parser.add_argument('--zp_dim_omics1', type=int, default=32, help='latent modali
 parser.add_argument('--zp_dim_omics2', type=int, default=32, help='latent modality 2-specific dimensionality')
 parser.add_argument('--zs_dim', type=int, default=32, help='latent shared dimensionality')
 parser.add_argument('--hidden_size', type=int, default=256, help='hidden layer size')
-parser.add_argument('--heads', type=int, default=10, help='number of heads in GAT')
+parser.add_argument('--heads', type=int, default=1, help='number of heads in GAT')
 parser.add_argument('--n_neighbors', type=int, default=20, help='number of neighbors in GNN')
 parser.add_argument('--seed', type=int, default=20, help='random seed')
 parser.add_argument('--beta', type=float, default=1, help='beta hyperparameter in VAE objective')
 parser.add_argument('--learning_rate', type=float, default=1e-3, help='learning rate')
 parser.add_argument('--interpretable', type=bool, default=False, help='whether to use interpretable mode')
-parser.add_argument('--reweight', type=bool, default=True, help='reweight the loss of different modalities')
+parser.add_argument('--reweight', type=bool, default=False, help='reweight the loss of different modalities')
 
 # Args
 args = parser.parse_args()
 wandb.login()
-root_path = "Data_SpatialGlue/"
+root_path = "Data/"
 data = "Dataset11_Human_Lymph_Node_A1"
 device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
 print(device)
@@ -116,12 +116,9 @@ elif 'cluster' in adata_raw[1].obs:
 
 if 'cluster' in adata.obs:
     cluster = adata.obs['cluster']
-    if args.interpretable:
-        cluster_learned = z.idxmax(1)
-    else:
-        adata.obsm['spamv'] = z.values()
-        clustering(adata, key='spamv', add_key='spamv', n_clusters=n_cluster, method='mclust', use_pca=True)
-        cluster_learned = adata.obs['spamv']
+    adata.obsm['spamv'] = z
+    clustering(adata, key='spamv', add_key='spamv', n_clusters=n_cluster, method='mclust', use_pca=True)
+    cluster_learned = adata.obs['spamv']
     ari = adjusted_rand_score(cluster, cluster_learned)
     mi = mutual_info_score(cluster, cluster_learned)
     nmi = normalized_mutual_info_score(cluster, cluster_learned)
