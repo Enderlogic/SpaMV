@@ -29,10 +29,10 @@ parser.add_argument('--epochs', type=int, default=500)
 parser.add_argument('--zp_dim_omics1', type=int, default=8, help='latent modality 1-specific dimensionality')
 parser.add_argument('--zp_dim_omics2', type=int, default=8, help='latent modality 2-specific dimensionality')
 parser.add_argument('--zs_dim', type=int, default=8, help='latent shared dimensionality')
-parser.add_argument('--hidden_size', type=int, default=256, help='hidden layer size')
+parser.add_argument('--hidden_size', type=int, default=128, help='hidden layer size')
 parser.add_argument('--heads', type=int, default=1, help='number of heads in GAT')
 parser.add_argument('--n_neighbors', type=int, default=20, help='number of neighbors in GNN')
-parser.add_argument('--seed', type=int, default=20, help='random seed')
+parser.add_argument('--seed', type=int, default=1214, help='random seed')
 parser.add_argument('--beta', type=float, default=1, help='beta hyperparameter in VAE objective')
 parser.add_argument('--learning_rate', type=float, default=1e-2, help='learning rate')
 parser.add_argument('--interpretable', type=bool, default=True, help='whether to use interpretable mode')
@@ -65,7 +65,7 @@ for filename in os.listdir(root_path + data + "/"):
     sc.pp.filter_cells(adata, min_genes=50 if adata.n_vars > 100 else 5)
     adata_raw.append(adata.copy())
     if "RNA" in filename or "peak" in filename:
-        adata = ST_preprocess(adata)
+        adata = ST_preprocess(adata, prune=True)
         adata_raw[-1] = adata_raw[-1][:, adata.var_names]
         recon_types.append('nb')
         omics_names.append("RNA" if "RNA" in filename else "ATAC")
@@ -105,7 +105,8 @@ model = SpaMV([adata_omics1, adata_omics2], zs_dim=args.zs_dim, zp_dims=[args.zp
               heads=args.heads, n_neighbors=args.n_neighbors, random_seed=args.seed,
               recon_types=[recon_type_omics1, recon_type_omics2])
 model.train(min_epochs=100, max_epochs=args.epochs, min_kl=args.beta, max_kl=args.beta,
-            learning_rate=args.learning_rate, folder_path=folder_path, n_cluster=n_cluster, omics_names=omics_names)
+            learning_rate=args.learning_rate, folder_path=folder_path, n_cluster=n_cluster, omics_names=omics_names,
+            test_mode=True)
 z = model.get_embedding()
 
 adata = anndata.concat([adata_raw[0], adata_raw[1]], join='outer', axis=1)
@@ -114,7 +115,6 @@ if 'cluster' in adata_raw[0].obs:
     adata.obs['cluster'] = adata_raw[0].obs['cluster']
 elif 'cluster' in adata_raw[1].obs:
     adata.obs['cluster'] = adata_raw[1].obs['cluster']
-
 
 plot_results(model, [adata_omics1, adata_omics2], omics_names, [args.zp_dim_omics1, args.zp_dim_omics2],
              args.zs_dim, folder_path, file_name='spamv_interpretable.pdf')
