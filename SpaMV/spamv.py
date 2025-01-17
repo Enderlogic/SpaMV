@@ -289,13 +289,11 @@ class SpaMV:
             topic_spot_update = topic_spot_update.drop(topic2, axis=1)
             if 'Shared' in topic2:
                 for i in range(self.n_omics):
-                    feature_topics_update[i] += feature_topics_update[i].drop(topic2, axis=1)
+                    feature_topics_update[i] = feature_topics_update[i].drop(topic2, axis=1)
             else:
                 for i in range(self.n_omics):
                     if topic2 in feature_topics_update[i].columns:
                         feature_topics_update[i] = feature_topics_update[i].drop(topic2, axis=1)
-            if topic1 == 'Shared topic 8' and topic2 == 'Shared topic 9':
-                a = 1
             continue
         return topic_spot_update, feature_topics_update
 
