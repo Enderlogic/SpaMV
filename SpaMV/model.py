@@ -13,7 +13,7 @@ from torch.distributions import HalfCauchy
 
 from . import dist
 from .dist import NB, ZINB
-from .layers import MLPEncoder, Decoder
+from .layers import MLPEncoder, Decoder, Decoder_zi_logits
 
 scale_init = math.log(0.01)
 
@@ -37,7 +37,9 @@ class spamv(PyroModule):
         self.zp_plate = [self.get_plate("zp_{}".format(i)) if zp_dim > 0 else None for i, zp_dim in enumerate(zp_dims)]
         self.device = device
         for i in range(len(data_dims)):
-            setattr(self, "disp_{}".format(i), PyroParam(torch.randn(data_dims[i], device=device)))
+            setattr(self, "disp_{}".format(i), PyroParam(torch.zeros(data_dims[i], device=device)))
+            # setattr(self, "disp_{}".format(i),
+            #         PyroParam(self._ones_init(data_dims[i], device=device), constraint=constraints.positive))
             setattr(self, "zs_encoder_{}".format(i),
                     MLPEncoder(data_dims[i], hidden_size, zs_dim, heads, interpretable).to(device))
             if zp_dims[i] > 0:
@@ -70,8 +72,8 @@ class spamv(PyroModule):
                         PyroParam(self._ones_init((self.latent_dims[i], data_dims[i]), device=device),
                                   constraint=constraints.positive))
                 if recon_types[i] == "zinb":
-                    setattr(self, 'zi_logits_{}'.format(i),
-                            PyroParam(torch.zeros((self.latent_dims[i], data_dims[i]), device=device)))
+                    setattr(self, "decoder_zi_logits_{}".format(i),
+                            Decoder_zi_logits(self.latent_dims[i], hidden_size, data_dims[i]).to(device))
             else:
                 setattr(self, "decoder_{}".format(i),
                         Decoder(self.latent_dims[i], hidden_size, data_dims[i], recon_types[i]).to(device))
@@ -132,18 +134,20 @@ class spamv(PyroModule):
                         c ** 2 + tau ** 2 * delta ** 2 * lambda_ ** 2)).sqrt()
                 betas.append(beta * lambda_tilde + bg)
             with sample_plate:
-                zss.append(pyro.sample("zs_{}".format(i), self.prior(torch.zeros(self.zs_dim, device=device),
-                                                                     torch.ones(self.zs_dim, device=device)).to_event(
-                    1)))
+                zs = pyro.sample("zs_{}".format(i), self.prior(torch.zeros(self.zs_dim, device=device),
+                                                               torch.ones(self.zs_dim, device=device)).to_event(1))
+                zs = zs.clamp(min=1e-10 if self.interpretable else -1e6, max=1e6)
+                zss.append(zs)
                 if self.zp_dims[i] > 0:
-                    zps.append(pyro.sample("zp_{}".format(i), self.prior(torch.zeros(self.zp_dims[i], device=device),
-                                                                         torch.ones(self.zp_dims[i],
-                                                                                    device=device)).to_event(1)))
+                    zp = pyro.sample("zp_{}".format(i), self.prior(torch.zeros(self.zp_dims[i], device=device),
+                                                                   torch.ones(self.zp_dims[i], device=device)).to_event(
+                        1))
+                    zp = zp.clamp(min=1e-10 if self.interpretable else -1e6, max=1e6)
+                    zps.append(zp)
                     zp_auxs.append(torch.zeros((data[0].shape[0], self.zp_dims[i]),
                                                device=device) if self.interpretable else Normal(
                         torch.zeros(self.zp_dims[i], device=device), getattr(self, "zp_aux_std_{}".format(i))).rsample(
                         (d.shape[0],)))
-
         for i in range(len(data)):
             for j in range(len(data)):
                 if i == j:
@@ -153,8 +157,11 @@ class spamv(PyroModule):
                     # cross reconstruction (using shared embedding from data i to reconstruct data j)
                     z = torch.cat((zss[i], zp_auxs[j]), dim=1) if self.zp_dims[j] > 0 else zss[i]
                 if self.interpretable:
-                    x_tilde = z @ F.softplus(betas[j]) + 1e-10
+                    x_tilde = z @ F.softplus(betas[j])
+                    x_tilde = x_tilde.clamp(min=1e-10)
                     x_tilde = lss[j] * x_tilde / x_tilde.sum(1, keepdim=True)
+                    if self.recon_types[j] == 'zinb':
+                        zi_logits = getattr(self, "decoder_zi_logits_{}".format(j))(z)
                 else:
                     if self.recon_types[j] == 'nb':
                         x_tilde = getattr(self, "decoder_{}".format(j))(z)
@@ -162,17 +169,21 @@ class spamv(PyroModule):
                         x_tilde, zi_logits = getattr(self, "decoder_{}".format(j))(z)
                     else:
                         raise NotImplementedError
+                    x_tilde = x_tilde.clamp(min=1e-10, max=1e8)
                 with sample_plate:
                     with poutine.scale(scale=self.weights[j]):
                         if self.recon_types[j] == 'nb':
-                            if (x_tilde <= 0).sum() > 0:
-                                breakpoint()
                             pyro.sample("recon_{}_from_{}".format(j, i),
                                         NB(x_tilde, getattr(self, "disp_{}".format(j)).exp()).to_event(1), obs=data[j])
+                            # pyro.sample("recon_{}_from_{}".format(j, i),
+                            #             NB(x_tilde, getattr(self, "disp_{}".format(j))).to_event(1), obs=data[j])
                         elif self.recon_types[j] == 'zinb':
                             pyro.sample("recon_{}_from_{}".format(j, i),
                                         ZINB(x_tilde, getattr(self, "disp_{}".format(j)).exp(), zi_logits).to_event(1),
                                         obs=data[j])
+                            # pyro.sample("recon_{}_from_{}".format(j, i),
+                            #             ZINB(x_tilde, getattr(self, "disp_{}".format(j)), zi_logits).to_event(1),
+                            #             obs=data[j])
                         else:
                             raise NotImplementedError
 
@@ -180,6 +191,8 @@ class spamv(PyroModule):
         sample_plate = pyro.plate("sample", data[0].shape[0])
         for i, d, e in zip(range(len(data)), data, edge_index):
             if self.interpretable:
+                if (getattr(self, 'c_mean_{}'.format(i)) != getattr(self, 'c_mean_{}'.format(i))).item():
+                    breakpoint()
                 pyro.sample("c_{}".format(i),
                             LogNormal(getattr(self, 'c_mean_{}'.format(i)), getattr(self, 'c_std_{}'.format(i))))
                 with self.omics_plate[i]:
@@ -197,10 +210,14 @@ class spamv(PyroModule):
                             getattr(self, 'beta_mean_{}'.format(i)), getattr(self, 'beta_std_{}'.format(i))))
             with sample_plate:
                 zs_mean, zs_scale = getattr(self, "zs_encoder_{}".format(i))(d, e)
+                # if self.interpretable:
+                #     zs_mean = zs_mean.clamp(max=10)
                 pyro.sample("zs_{}".format(i),
                             self.prior(zs_mean, zs_scale if self.interpretable else (zs_scale / 2).exp()).to_event(1))
                 if self.zp_dims[i] > 0:
                     zp_mean, zp_scale = getattr(self, "zp_encoder_{}".format(i))(d, e)
+                    # if self.interpretable:
+                    #     zp_mean = zp_mean.clamp(max=10)
                     pyro.sample("zp_{}".format(i),
                                 self.prior(zp_mean, zp_scale if self.interpretable else (zp_scale / 2).exp()).to_event(
                                     1))
@@ -220,6 +237,7 @@ class spamv(PyroModule):
                     zp_mean_i, zp_std_i = getattr(self, "zp_encoder_{}".format(i))(d, e)
                     z_mean = torch.cat((z_mean, self.mean(zp_mean_i, zp_std_i) if self.interpretable else zp_mean_i),
                                        dim=1)
+            z_mean = z_mean.clamp(min=1e-10 if self.interpretable else -1e6, max=1e6)
         return z_mean
 
     @torch.inference_mode()
@@ -257,3 +275,11 @@ class spamv(PyroModule):
         bg_omics1 = self.bg_loc_omics1 + self.init_bg_mean_omics1
         bg_omics2 = self.bg_loc_omics2 + self.init_bg_mean_omics2
         return bg_omics1.exp(), bg_omics2.exp()
+
+    def save(self, path):
+        pyro.get_param_store().save(path)
+
+    def load(self, path, map_location=torch.device('cpu')):
+        pyro.get_param_store().load(path, map_location=map_location)
+        pyro.module("zs_encocder_0", self.zs_encoder_0, update_module_params=True)
+        pyro.module("zs_encocder_1", self.zs_encoder_1, update_module_params=True)
