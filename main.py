@@ -2,21 +2,14 @@ import argparse
 import os
 
 import anndata
-import numpy as np
 import scanpy as sc
 import torch
-import wandb
-from numpy.linalg import norm
 from sklearn.metrics import adjusted_rand_score, mutual_info_score, normalized_mutual_info_score, \
     adjusted_mutual_info_score, homogeneity_score, v_measure_score
 
+import wandb
 from SpaMV.spamv import SpaMV
 from SpaMV.utils import ST_preprocess, clr_normalize_each_cell, clustering
-
-
-def cosine_similarity(A, B):
-    return np.dot(A, B) / (norm(A) * norm(B))
-
 
 sc._settings.ScanpyConfig.figdir = '.'
 # Argument to parse
@@ -28,7 +21,7 @@ parser.add_argument('--zs_dim', type=int, default=32, help='latent shared dimens
 parser.add_argument('--hidden_size', type=int, default=256, help='hidden layer size')
 parser.add_argument('--heads', type=int, default=1, help='number of heads in GAT')
 parser.add_argument('--n_neighbors', type=int, default=20, help='number of neighbors in GNN')
-parser.add_argument('--seed', type=int, default=20, help='random seed')
+parser.add_argument('--seed', type=int, default=1234, help='random seed')
 parser.add_argument('--beta', type=float, default=1, help='beta hyperparameter in VAE objective')
 parser.add_argument('--learning_rate', type=float, default=1e-3, help='learning rate')
 parser.add_argument('--interpretable', type=bool, default=False, help='whether to use interpretable mode')
@@ -101,10 +94,9 @@ wandb.init(project=data, config=args,
 model = SpaMV([adata_omics1, adata_omics2], zs_dim=args.zs_dim, zp_dims=[args.zp_dim_omics1, args.zp_dim_omics2],
               weights=[weight_omics1, weight_omics2], interpretable=args.interpretable, hidden_size=args.hidden_size,
               heads=args.heads, n_neighbors=args.n_neighbors, random_seed=args.seed,
-              recon_types=[recon_type_omics1, recon_type_omics2])
+              recon_types=[recon_type_omics1, recon_type_omics2], omics_names=omics_names)
 model.train(min_epochs=100, max_epochs=args.epochs, min_kl=args.beta, max_kl=args.beta,
-            learning_rate=args.learning_rate, folder_path=folder_path, n_cluster=n_cluster, omics_names=omics_names,
-            test_mode=True)
+            learning_rate=args.learning_rate, folder_path=folder_path, n_cluster=n_cluster,test_mode=True)
 z = model.get_embedding()
 
 adata = anndata.concat([adata_raw[0], adata_raw[1]], join='outer', axis=1)
