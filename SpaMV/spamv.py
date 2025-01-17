@@ -21,7 +21,7 @@ from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
 from torchinfo import summary
 from tqdm import tqdm
-from .metrics import moranI_score
+from .metrics import moranI_score, calculate_jaccard
 from .model import spamv
 from .utils import adjacent_matrix_preprocessing, get_init_bg, plot_results, log_mean_exp, cosine_similarity, \
     clustering, compute_similarity
@@ -294,6 +294,8 @@ class SpaMV:
                 for i in range(self.n_omics):
                     if topic2 in feature_topics_update[i].columns:
                         feature_topics_update[i] = feature_topics_update[i].drop(topic2, axis=1)
+            if topic1 == 'Shared topic 8' and topic2 == 'Shared topic 9':
+                a = 1
             continue
         return topic_spot_update, feature_topics_update
 
