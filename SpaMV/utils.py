@@ -2,15 +2,18 @@ import math
 import os.path
 
 import numpy as np
+import pandas
 import pandas as pd
 import torch
 from matplotlib import pyplot as plt
+import matplotlib.lines as mlines
+from natsort import natsorted
 from numpy.linalg import norm
 from pandas import DataFrame
 from scanpy.plotting import embedding
 from scipy.sparse import csr_matrix
 import scanpy as sc
-
+from scipy.spatial.distance import pdist
 from sklearn.neighbors import kneighbors_graph
 from torch_geometric.utils import coalesce
 
@@ -55,8 +58,8 @@ def get_init_bg(x):
     return bg_init
 
 
-def plot_results(adatas, omics_names, topic_prop, feature_topics, save=True, folder_path=None, file_name=None,
-                 show=False, full=False, corresponding_features=True):
+def plot_embedding_results(adatas, omics_names, topic_prop, feature_topics, save=True, folder_path=None, file_name=None,
+                           show=False, full=False, corresponding_features=True):
     zs_dim = len([item for item in topic_prop.columns if 'Shared' in item])
     n_omics = len(adatas)
     zp_dims = []
@@ -124,6 +127,51 @@ def plot_results(adatas, omics_names, topic_prop, feature_topics, save=True, fol
     #                       basis='spatial', size=100, show=False, ncols=3, vmax='p99')
     #             fn = folder_path + omics_names[1] + '_private_topic_' + str(i + 1 - n_zp_omics1 - n_zs) + '.pdf'
     #         plt.savefig(fn)
+
+
+def replace_legend(legend_texts):
+    for legend_text in legend_texts:
+        if legend_text.get_text() == 'NA':
+            legend_text.set_text('other topics')
+
+
+def plot_clustering_results(adata, cluster_name, omics_names, folder_path, show=False, suffix=None):
+    max_length = max([len(item) for item in adata.obs[cluster_name].unique()])
+    max_height = adata.obs[cluster_name].nunique()
+    adata.obs[cluster_name] = pandas.Categorical(values=adata.obs[cluster_name].values,
+                                                 categories=natsorted(adata.obs[cluster_name].unique()), ordered=True)
+    import seaborn as sns
+    higher_class_palette = sns.color_palette("Set1", 3)
+    high_classes = ['Shared'] + omics_names
+    higher_class_colors = {i: color for i, color in zip(high_classes, higher_class_palette)}
+    subclass_colors = {}
+    for higher_class, color in higher_class_colors.items():
+        subclass_labels = [item for item in adata.obs[cluster_name].cat.categories if higher_class in item]
+        subclass_palette = sns.light_palette(color, n_colors=len(subclass_labels) + 2)
+        for label, subclass_color in zip(subclass_labels, subclass_palette[2:]):
+            subclass_colors[label] = subclass_color
+    adata.uns['colors'] = [subclass_colors[label] for label in adata.obs[cluster_name].cat.categories]
+    for group_name in ['All', 'Shared'] + omics_names:
+        if group_name == 'All':
+            groups = adata.obs[cluster_name].unique()
+        else:
+            groups = [item for item in adata.obs[cluster_name].unique() if group_name in item]
+        fig, ax = plt.subplots(figsize=(5 + max_length * .12, 4 if max_height < 9 else 4 + (max_height - 9) * .13))
+        sc.pl.embedding(adata, color=cluster_name, basis='spatial', vmax='p99', size=100,
+                        title=group_name + ' topics' if group_name in ['All',
+                                                                       'Shared'] else group_name + ' private topics',
+                        show=False, groups=groups, ax=ax, palette=adata.uns['colors'])
+        plt.plot([], [], label=' ' * (max_length + 14))
+        handles, labels = ax.get_legend_handles_labels()
+        handles[-1] = mlines.Line2D([], [], color='white')
+        plt.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.48), frameon=False)
+        replace_legend(ax.get_legend().get_texts())
+        plt.tight_layout()
+        plt.savefig(
+            folder_path + group_name + '_topics.pdf' if suffix is None else folder_path + group_name + '_topics_' + suffix + '.pdf')
+        if show:
+            plt.show()
+            a = 1
 
 
 def ST_preprocess(adata_st, normalize=True, log=True, prune=False, highly_variable_genes=True, n_top_genes=3000,
@@ -374,5 +422,3 @@ def compute_similarity(z, w):
             w1_j = w[1][j]
             similarity_feature.loc[i, j] = cosine_similarity(w1_i.values, w1_j.values)
     return similarity_spot, similarity_feature
-
-

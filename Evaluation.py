@@ -11,7 +11,7 @@ from sklearn.metrics import adjusted_rand_score, mutual_info_score, normalized_m
     adjusted_mutual_info_score, homogeneity_score, v_measure_score
 
 import wandb
-from SpaMV.metrics import jaccard_scores, moranI_score
+from SpaMV.metrics import compute_moranI, compute_jaccard
 from SpaMV.spamv import SpaMV
 from SpaMV.utils import ST_preprocess, clr_normalize_each_cell, clustering
 
@@ -106,27 +106,27 @@ for _, dirs, _ in os.walk(root_path):
             seed = random.randint(1, 10000)
             run = wandb.init(project=data, config=args,
                              name=str(args.zp_dim_omics1) + '_' + str(args.zs_dim) + '_' + str(
-                                 args.zp_dim_omics2) + '_' + str(
-                                 args.beta) + '_' + str(args.learning_rate) + '_' + str(args.reweight) + '_' + str(
-                                 seed) + '_' + str(
-                                 args.heads) + '_' + str(args.n_neighbors) + '_' + str(args.interpretable))
+                                 args.zp_dim_omics2) + '_' + str(args.beta) + '_' + str(args.learning_rate) + '_' + str(
+                                 args.reweight) + '_' + str(seed) + '_' + str(args.heads) + '_' + str(
+                                 args.n_neighbors) + '_' + str(args.interpretable))
             model = SpaMV([adata_omics1, adata_omics2], zs_dim=args.zs_dim,
                           zp_dims=[args.zp_dim_omics1, args.zp_dim_omics2], weights=[weight_omics1, weight_omics2],
                           interpretable=args.interpretable, hidden_size=args.hidden_size, heads=args.heads,
                           n_neighbors=args.n_neighbors, random_seed=seed,
-                          recon_types=[recon_type_omics1, recon_type_omics2], omics_names=omics_names)
-            model.train(min_epochs=100, max_epochs=args.epochs, min_kl=args.beta, max_kl=args.beta,
-                        learning_rate=args.learning_rate, folder_path=folder_path, n_cluster=n_cluster)
+                          recon_types=[recon_type_omics1, recon_type_omics2], omics_names=omics_names, min_epochs=100,
+                          max_epochs=args.epochs, min_kl=args.beta, max_kl=args.beta, learning_rate=args.learning_rate,
+                          folder_path=folder_path, n_cluster=n_cluster)
+            model.train()
             run.finish()
             z = model.get_embedding()
             adata_omics1.obsm['spamv'] = z
             adata_omics1.obsm['zs+zp1'] = z[:, :args.zs_dim + args.zp_dim_omics1]
             adata_omics2.obsm['zs+zp2'] = numpy.concatenate((z[:, :args.zs_dim], z[:, -args.zp_dim_omics2:]), axis=1)
-            jaccard1 = jaccard_scores(adata_omics1, adata_omics1, 'zs+zp1', 'X_pca')
-            jaccard2 = jaccard_scores(adata_omics2, adata_omics2, 'zs+zp2', 'X_pca')
+            jaccard1 = compute_jaccard(adata_omics1, adata_omics1, 'zs+zp1', 'X_pca')
+            jaccard2 = compute_jaccard(adata_omics2, adata_omics2, 'zs+zp2', 'X_pca')
             clustering(adata_omics1, key='spamv', add_key='spamv', n_clusters=n_cluster,
                        method='mclust', use_pca=True)
-            moranI = moranI_score(adata_omics1, 'spamv')
+            moranI = compute_moranI(adata_omics1, 'spamv')
             if 'cluster' in adata_omics1.obs:
                 cluster = adata_omics1.obs['cluster']
                 cluster_learned = adata_omics1.obs['spamv']

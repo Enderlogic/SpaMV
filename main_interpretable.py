@@ -16,8 +16,10 @@ from tqdm import tqdm
 from SpatialGlue.utils import clustering
 
 import wandb
+
+from SpaMV.metrics import compute_supervised_scores
 from SpaMV.spamv import SpaMV
-from SpaMV.utils import ST_preprocess, clr_normalize_each_cell, plot_results
+from SpaMV.utils import ST_preprocess, clr_normalize_each_cell, plot_embedding_results
 
 
 def cosine_similarity(A, B):
@@ -27,8 +29,8 @@ def cosine_similarity(A, B):
 sc._settings.ScanpyConfig.figdir = '.'
 # Argument to parse
 parser = argparse.ArgumentParser(description='SpaMV Experiment')
-parser.add_argument('--epochs', type=int, default=1)
-parser.add_argument('--data', type=str, default='Dataset11_Human_Lymph_Node_A1')
+parser.add_argument('--epochs', type=int, default=500)
+parser.add_argument('--data', type=str, default='Dataset12_Human_Lymph_Node_D1')
 parser.add_argument('--zp_dim_omics1', type=int, default=10, help='latent modality 1-specific dimensionality')
 parser.add_argument('--zp_dim_omics2', type=int, default=10, help='latent modality 2-specific dimensionality')
 parser.add_argument('--zs_dim', type=int, default=10, help='latent shared dimensionality')
@@ -39,14 +41,14 @@ parser.add_argument('--seed', type=int, default=20, help='random seed')
 parser.add_argument('--beta', type=float, default=1, help='beta hyperparameter in VAE objective')
 parser.add_argument('--learning_rate', type=float, default=1e-2, help='learning rate')
 parser.add_argument('--interpretable', type=bool, default=True, help='whether to use interpretable mode')
-parser.add_argument('--reweight', type=bool, default=False, help='reweight the loss of different modalities')
+parser.add_argument('--reweight', type=bool, default=True, help='reweight the loss of different modalities')
 
 # Args
 args = parser.parse_args()
 wandb.login()
 root_path = "Data/"
 files = [item for item in os.listdir(root_path) if os.path.isdir(os.path.join(root_path, item)) and args.data in item]
-if len(files) !=1:
+if len(files) != 1:
     raise ValueError('Please provide correct and unique part of data name')
 else:
     data = files[0]
@@ -113,15 +115,19 @@ wandb.init(project=data, config=args,
 model = SpaMV([adata_omics1, adata_omics2], zs_dim=args.zs_dim, zp_dims=[args.zp_dim_omics1, args.zp_dim_omics2],
               weights=[weight_omics1, weight_omics2], interpretable=args.interpretable, hidden_size=args.hidden_size,
               heads=args.heads, n_neighbors=args.n_neighbors, random_seed=args.seed,
-              recon_types=[recon_type_omics1, recon_type_omics2], omics_names=omics_names)
-model.train(min_epochs=100, max_epochs=args.epochs, min_kl=args.beta, max_kl=args.beta,
-            learning_rate=args.learning_rate, folder_path=folder_path, n_cluster=n_cluster, test_mode=True)
-z, w = model.get_embedding_and_feature_by_topic()
+              recon_types=[recon_type_omics1, recon_type_omics2], omics_names=omics_names, min_epochs=100,
+              max_epochs=args.epochs, min_kl=args.beta, max_kl=args.beta, learning_rate=args.learning_rate,
+              folder_path=folder_path, n_cluster=n_cluster, test_mode=True)
+model.train()
+z, w = model.get_embedding_and_feature_by_topic(map=True)
 z.to_csv(folder_path + 'embedding.csv')
 w[0].to_csv(folder_path + 'weight_' + omics_names[0] + '.csv')
 w[1].to_csv(folder_path + 'weight_' + omics_names[1] + '.csv')
 
-plot_results(adata_raw, omics_names, z, w, folder_path=folder_path, file_name='spamv_interpretable.pdf')
+plot_embedding_results(adata_raw, omics_names, z, w, folder_path=folder_path, file_name='spamv_interpretable.pdf')
+
+scores = compute_supervised_scores(adata_omics1, z)
+print("ari: {:.3f}, average: {:.3f}".format(scores['ari'], scores['average']))
 cs_omics1 = pandas.DataFrame(np.zeros((adata_omics1.shape[1], z.shape[1])), columns=z.columns,
                              index=adata_omics1.var_names)
 cs_omics2 = pandas.DataFrame(np.zeros((adata_omics2.shape[1], z.shape[1])), columns=z.columns,
@@ -145,18 +151,3 @@ plot_df[omics_names[1] + '_std'] = [cs_omics2.nlargest(10, topic).loc[:, topic].
 plot_df.plot.bar(x='label', y=omics_names,
                  yerr=plot_df[[omics_names[0] + '_std', omics_names[1] + '_std']].T.values)
 plt.savefig(folder_path + 'cosine_similarity.pdf')
-if 'cluster' in adata_omics1.obs:
-    cluster = adata_omics1.obs['cluster']
-    if args.interpretable:
-        cluster_learned = z.idxmax(1)
-    else:
-        adata_omics1.obsm['spamv'] = z.values()
-        clustering(adata_omics1, key='spamv', add_key='spamv', n_clusters=n_cluster, method='mclust', use_pca=True)
-        cluster_learned = adata_omics1.obs['spamv']
-    ari = adjusted_rand_score(cluster, cluster_learned)
-    mi = mutual_info_score(cluster, cluster_learned)
-    nmi = normalized_mutual_info_score(cluster, cluster_learned)
-    ami = adjusted_mutual_info_score(cluster, cluster_learned)
-    hom = homogeneity_score(cluster, cluster_learned)
-    vme = v_measure_score(cluster, cluster_learned)
-    print("ari: " + str(ari) + "\naverage: " + str((ari + mi + nmi + ami + hom + vme) / 6))

@@ -94,9 +94,10 @@ wandb.init(project=data, config=args,
 model = SpaMV([adata_omics1, adata_omics2], zs_dim=args.zs_dim, zp_dims=[args.zp_dim_omics1, args.zp_dim_omics2],
               weights=[weight_omics1, weight_omics2], interpretable=args.interpretable, hidden_size=args.hidden_size,
               heads=args.heads, n_neighbors=args.n_neighbors, random_seed=args.seed,
-              recon_types=[recon_type_omics1, recon_type_omics2], omics_names=omics_names)
-model.train(min_epochs=100, max_epochs=args.epochs, min_kl=args.beta, max_kl=args.beta,
-            learning_rate=args.learning_rate, folder_path=folder_path, n_cluster=n_cluster,test_mode=True)
+              recon_types=[recon_type_omics1, recon_type_omics2], omics_names=omics_names, min_epochs=100,
+              max_epochs=args.epochs, min_kl=args.beta, max_kl=args.beta, learning_rate=args.learning_rate,
+              folder_path=folder_path, n_cluster=n_cluster, test_mode=True)
+model.train()
 z = model.get_embedding()
 
 adata = anndata.concat([adata_raw[0], adata_raw[1]], join='outer', axis=1)

@@ -17,24 +17,25 @@ from scipy.sparse import issparse
 from scipy.spatial.distance import cosine, cdist
 from sklearn.metrics import adjusted_rand_score, mutual_info_score, normalized_mutual_info_score, \
     adjusted_mutual_info_score, homogeneity_score, v_measure_score
+from sklearn.preprocessing import MinMaxScaler
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
 from torchinfo import summary
 from tqdm import tqdm
-from .metrics import moranI_score, calculate_jaccard
+from .metrics import compute_moranI, compute_jaccard
 from .model import spamv
-from .utils import adjacent_matrix_preprocessing, get_init_bg, plot_results, log_mean_exp, cosine_similarity, \
+from .utils import adjacent_matrix_preprocessing, get_init_bg, plot_embedding_results, log_mean_exp, cosine_similarity, \
     clustering, compute_similarity
 
 
 class SpaMV:
     def __init__(self, adatas: List[AnnData], zp_dims: List[int] = None, zs_dim: int = 5, weights: List[float] = None,
                  recon_types: List[str] = None, omics_names: List[str] = None, device: torch.device = None,
-                 hidden_size: int = 128, heads: int = 1,
-                 n_neighbors: int = 20,
-                 interpretable: bool = True, verbose: bool = False,
-                 random_seed: int = 1214,
-                 ):
+                 hidden_size: int = 128, heads: int = 1, n_neighbors: int = 20, interpretable: bool = True,
+                 verbose: bool = False, random_seed: int = 1214, min_epochs: int = 100, max_epochs: int = 1000,
+                 min_kl: float = 1, max_kl: float = 1, learning_rate: float = 1e-3, folder_path: str = None,
+                 early_stopping: bool = True, patience: int = 20, n_cluster: int = 10, test_mode: bool = False,
+                 result: DataFrame = None):
         pyro.clear_param_store()
         pyro.set_rng_seed(random_seed)
         torch.manual_seed(random_seed)
@@ -80,6 +81,17 @@ class SpaMV:
         self.n_obs = adatas[0].shape[0]
         self.data_dims = [data.shape[1] for data in adatas]
         self.interpretable = interpretable
+        self.min_epochs = min_epochs
+        self.max_epochs = max_epochs
+        self.min_kl = min_kl
+        self.max_kl = max_kl
+        self.learning_rate = learning_rate
+        self.folder_path = folder_path
+        self.early_stopping = early_stopping
+        self.patience = patience
+        self.n_cluster = n_cluster
+        self.test_mode = test_mode
+        self.result = result
 
         self.x = [torch.tensor(data.X.toarray() if issparse(data.X) else data.X, device=self.device, dtype=torch.float)
                   for data in adatas]
@@ -91,22 +103,18 @@ class SpaMV:
         if verbose:
             print(summary(self.model))
 
-    def train(self, max_epochs=1000, min_epochs=100, learning_rate=0.001, betas=(0.9, 0.999), weight_decay=0, min_kl=1,
-              max_kl=1, early_stop=True, patience=20, n_cluster=10, folder_path=None, test_mode=False, result=None):
-        self.min_kl = min_kl
-        self.max_kl = max_kl
-        self.max_epochs = max_epochs
+    def train(self):
         self.model = self.model.to(self.device)
-        if early_stop:
-            self.early_stopper = EarlyStopper(patience=patience)
+        if self.early_stopping:
+            self.early_stopper = EarlyStopper(patience=self.patience)
 
-        pbar = tqdm(range(max_epochs), position=0, leave=True)
+        pbar = tqdm(range(self.max_epochs), position=0, leave=True)
         loss_fn = lambda model, guide: TraceMeanField_ELBO(num_particles=1).differentiable_loss(
             scale(model, 1 / self.n_obs), scale(guide, 1 / self.n_obs), self.x, self.edge_index)
         with trace(param_only=True) as param_capture:
             loss = loss_fn(self.model.model, self.model.guide)
         params = set(site["value"].unconstrained() for site in param_capture.trace.nodes.values())
-        optimizer = Adam(params, lr=learning_rate, betas=betas, weight_decay=weight_decay)
+        optimizer = Adam(params, lr=self.learning_rate, betas=(0.9, 0.999), weight_decay=0)
         for epoch in pbar:
             self.model.train()
             optimizer.zero_grad()
@@ -116,29 +124,30 @@ class SpaMV:
             optimizer.step()
             pbar.set_description(f"Epoch Loss:{loss:.3f}")
 
-            if early_stop:
-                if epoch > min_epochs:
+            if self.early_stopping:
+                if epoch > self.min_epochs:
                     if self.early_stopper.early_stop(loss):
                         print("Early Stopping")
                         break
-            if (epoch + 1) % 50 == 0 and test_mode:
+            if (epoch + 1) % 50 == 0 and self.test_mode:
                 if self.interpretable:
                     z, w = self.get_embedding_and_feature_by_topic(map=True)
-                    self.adatas[0].obs['spamv'] = z.idxmax(1)
-                    plot_results(self.adatas, self.omics_names, z, w, folder_path=folder_path,
-                                 file_name='spamv_' + str(epoch + 1) + '.pdf')
+                    self.adatas[0].obs['spamv'] = DataFrame(MinMaxScaler().fit_transform(z), columns=z.columns,
+                                                    index=z.index).idxmax(1)
+                    plot_embedding_results(self.adatas, self.omics_names, z, w, folder_path=self.folder_path,
+                                           file_name='spamv_' + str(epoch + 1) + '.pdf')
                 else:
                     z = self.get_embedding()
                     self.adatas[0].obsm['spamv'] = z
                     self.adatas[0].obsm['zs+zp1'] = z[:, :self.zs_dim + self.zp_dims[0]]
                     self.adatas[1].obsm['zs+zp2'] = numpy.concatenate((z[:, :self.zs_dim], z[:, -self.zp_dims[1]:]),
                                                                       axis=1)
-                    jaccard1 = calculate_jaccard(self.adatas[0], 'zs+zp1', 'X_pca')
-                    jaccard2 = calculate_jaccard(self.adatas[1], 'zs+zp2', 'X_pca')
+                    jaccard1 = compute_jaccard(self.adatas[0], 'zs+zp1', 'X_pca')
+                    jaccard2 = compute_jaccard(self.adatas[1], 'zs+zp2', 'X_pca')
                     wandb.log({"jaccard1": jaccard1}, step=epoch)
                     wandb.log({"jaccard2": jaccard2}, step=epoch)
                     print("jaccard 1: ", str(jaccard1), "jaccard 2:", str(jaccard2))
-                    clustering(self.adatas[0], key='spamv', add_key='spamv', n_clusters=n_cluster, method='mclust',
+                    clustering(self.adatas[0], key='spamv', add_key='spamv', n_clusters=self.n_cluster, method='mclust',
                                use_pca=True)
                 if 'cluster' in self.adatas[0].obs:
                     cluster = self.adatas[0].obs['cluster']
@@ -157,18 +166,18 @@ class SpaMV:
                     wandb.log({"vme": vme}, step=epoch)
                     wandb.log({'ave': (ari + mi + nmi + ami + hom + vme) / 6}, step=epoch)
                     print("ari: ", str(ari), "\naverage: ", str((ari + mi + nmi + ami + hom + vme) / 6))
-                    if result is not None:
-                        result.loc[len(result)] = [self.zp_dims[0], self.zs_dim, self.hidden_size, self.heads,
-                                                   self.n_neighbors, self.max_kl, learning_rate,
-                                                   self.weights[0] == self.weights[1], epoch, "ari", ari]
-                        result.loc[len(result)] = [self.zp_dims[0], self.zs_dim, self.hidden_size, self.heads,
-                                                   self.n_neighbors, self.max_kl, learning_rate,
-                                                   self.weights[0] == self.weights[1], epoch, "average",
-                                                   (ari + mi + nmi + ami + hom + vme) / 6]
-                moranI = moranI_score(self.adatas[0], 'spamv')
+                    if self.result is not None:
+                        self.result.loc[len(self.result)] = [self.zp_dims[0], self.zs_dim, self.hidden_size, self.heads,
+                                                             self.n_neighbors, self.max_kl, self.learning_rate,
+                                                             self.weights[0] == self.weights[1], epoch, "ari", ari]
+                        self.result.loc[len(self.result)] = [self.zp_dims[0], self.zs_dim, self.hidden_size, self.heads,
+                                                             self.n_neighbors, self.max_kl, self.learning_rate,
+                                                             self.weights[0] == self.weights[1], epoch, "average",
+                                                             (ari + mi + nmi + ami + hom + vme) / 6]
+                moranI = compute_moranI(self.adatas[0], 'spamv')
                 wandb.log({"spamv moran I": moranI}, step=epoch)
                 print('moran I', moranI)
-        return result
+        return self.result
 
     def _kl_weight(self, iteration):
         kl = self.min_kl + iteration / self.max_epochs * (self.max_kl - self.min_kl)
@@ -268,7 +277,7 @@ class SpaMV:
             if similarity_spot.stack().max() > threshold:
                 topic1, topic2 = similarity_spot.stack().idxmax()
                 print('The pattern between', topic1, 'and', topic2,
-                      'is very similar, with a cosine similarity of {:.3f}. Therefore, we decided to prune'.format(
+                      'is similar, with a cosine similarity of {:.3f}. Therefore, we decided to prune'.format(
                           similarity_spot.stack().max()), topic2 + '.')
             elif similarity_feature.stack().max() > threshold:
                 topic1, topic2 = similarity_feature.stack().idxmax()
