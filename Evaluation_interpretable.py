@@ -34,8 +34,6 @@ result = pandas.DataFrame(columns=['method', 'dataset', 'metrics', 'score'])
 for _, dirs, _ in os.walk(root_path):
     for data in dirs:
         print(data)
-        if "ccRCC" not in data:
-            continue
         folder_path = 'results/' + data + '/'
         adata_combined = []
         adata_raw = []
@@ -52,25 +50,21 @@ for _, dirs, _ in os.walk(root_path):
                 adata_raw[-1] = adata_raw[-1][:, adata.var_names]
                 recon_types.append('nb')
                 if "RNA" in filename:
-                    omics_names.append('RNA')
+                    omics_names.append('Transcriptomics')
                 elif "peak" in filename:
-                    omics_names.append('ATAC')
+                    omics_names.append('Epigenomics')
                 elif "SM" in filename:
-                    omics_names.append('Metabolin')
+                    omics_names.append('Metabonomics')
             elif "ADT" in filename:
                 adata = clr_normalize_each_cell(adata)
                 sc.pp.pca(adata)
-                omics_names.append("Protein")
+                omics_names.append("Proteomics")
                 recon_types.append('nb')
             adata_combined.append(adata)
         adata_omics1 = adata_combined[0]
         adata_omics2 = adata_combined[1]
         recon_type_omics1 = recon_types[0]
         recon_type_omics2 = recon_types[1]
-        for v in adata_omics1.var_names:
-            if v in adata_omics2.var_names:
-                adata_omics1.var.rename(index={v: v + '_' + omics_names[0]}, inplace=True)
-                adata_raw[0].var.rename(index={v: v + '_' + omics_names[0]}, inplace=True)
         adata_omics1 = adata_omics1[adata_omics1.obs_names.intersection(adata_omics2.obs_names), :]
         adata_omics2 = adata_omics2[adata_omics2.obs_names.intersection(adata_omics1.obs_names), :]
         adata_raw[0] = adata_raw[0][adata_omics1.obs_names.intersection(adata_omics2.obs_names), :]
