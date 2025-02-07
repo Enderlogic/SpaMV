@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATv2Conv, BatchNorm
@@ -43,6 +44,7 @@ class Decoder(nn.Module):
         else:
             return F.softplus(self.fc2(hidden))
 
+
 class Decoder_zi_logits(nn.Module):
     def __init__(self, z_dim, hidden_size, out_dim):
         super().__init__()
@@ -52,3 +54,36 @@ class Decoder_zi_logits(nn.Module):
     def forward(self, z):
         hidden = F.relu(self.fc1(z))
         return self.fc2(hidden)
+
+
+class Distinguished_Decoder(nn.Module):
+    def __init__(self, zp_dims, hidden_dim, data_dims, recon_types, omics_names, interpretable):
+        super(Distinguished_Decoder, self).__init__()
+        self.recon_types = recon_types
+        self.omics_names = omics_names
+        self.interpretable = interpretable
+        self.fc1 = nn.ModuleDict()
+        self.fc2 = nn.ModuleDict()
+        self.w = nn.ParameterDict()
+        for i in range(len(data_dims)):
+            for j in range(len(data_dims)):
+                if i != j:
+                    name = "from_" + omics_names[i] + "_to_" + omics_names[j]
+                    if interpretable:
+                        self.w[name] = nn.Parameter(torch.randn(zp_dims[i], data_dims[j]))
+                    else:
+                        self.fc1[name] = nn.Linear(zp_dims[i], hidden_dim)
+                        self.fc2[name] = nn.Linear(hidden_dim, data_dims[j])
+    def forward(self, zps):
+        output = {}
+        for i in range(len(self.omics_names)):
+            for j in range(len(self.omics_names)):
+                if i != j:
+                    name = "from_" + self.omics_names[i] + "_to_" + self.omics_names[j]
+                    if self.interpretable:
+                        output[name] = zps[i] @ F.softplus(self.w[name])
+                    else:
+                        hidden = F.relu(self.fc1[name](zps[i]))
+                        output[name] = F.softplus(self.fc2[name](hidden))
+                    output[name] = output[name].clamp(min=1e-10, max=1e8)
+        return output

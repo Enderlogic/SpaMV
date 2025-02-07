@@ -1,43 +1,45 @@
 import argparse
 import os
 
-import anndata
+import matplotlib.pyplot as plt
 import scanpy as sc
 import torch
-from sklearn.metrics import adjusted_rand_score, mutual_info_score, normalized_mutual_info_score, \
-    adjusted_mutual_info_score, homogeneity_score, v_measure_score
+import torch.nn.functional as F
 
 import wandb
+from SpaMV.metrics import compute_supervised_scores, compute_jaccard
 from SpaMV.spamv import SpaMV
 from SpaMV.utils import ST_preprocess, clr_normalize_each_cell, clustering
 
 sc._settings.ScanpyConfig.figdir = '.'
 # Argument to parse
 parser = argparse.ArgumentParser(description='SpaMV Experiment')
-parser.add_argument('--epochs', type=int, default=500)
+parser.add_argument('--epochs', type=int, default=200)
 parser.add_argument('--zp_dim_omics1', type=int, default=32, help='latent modality 1-specific dimensionality')
 parser.add_argument('--zp_dim_omics2', type=int, default=32, help='latent modality 2-specific dimensionality')
 parser.add_argument('--zs_dim', type=int, default=32, help='latent shared dimensionality')
-parser.add_argument('--hidden_size', type=int, default=256, help='hidden layer size')
+parser.add_argument('--hidden_dim', type=int, default=256, help='hidden layer size')
 parser.add_argument('--heads', type=int, default=1, help='number of heads in GAT')
 parser.add_argument('--n_neighbors', type=int, default=20, help='number of neighbors in GNN')
-parser.add_argument('--seed', type=int, default=1234, help='random seed')
-parser.add_argument('--beta', type=float, default=1, help='beta hyperparameter in VAE objective')
+parser.add_argument('--seed', type=int, default=10, help='random seed')
+parser.add_argument('--kl', type=float, default=1, help='beta hyperparameter in VAE objective')
+parser.add_argument('--beta_0', type=float, default=1)
+parser.add_argument('--beta_1', type=float, default=1)
 parser.add_argument('--learning_rate', type=float, default=1e-3, help='learning rate')
 parser.add_argument('--interpretable', type=bool, default=False, help='whether to use interpretable mode')
 parser.add_argument('--reweight', type=bool, default=False, help='reweight the loss of different modalities')
+parser.add_argument('--detach', type=bool, default=True, help='whether to use detach')
+parser.add_argument('--distinguish', type=bool, default=True, help='whether to use distinguish')
 
 # Args
 args = parser.parse_args()
 wandb.login()
 root_path = "Data/"
-data = "Dataset11_Human_Lymph_Node_A1"
-device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-print(device)
+data = "Dataset7_Mouse_Brain_ATAC"
+device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
 folder_path = 'results/' + data + '/'
 print(data)
 adata_combined = []
-adata_raw = []
 omics_names = []
 recon_types = []
 if 'Spleen' in data:
@@ -54,68 +56,74 @@ for filename in os.listdir(root_path + data + "/"):
     adata = sc.read_h5ad(root_path + data + "/" + filename)
     adata.var_names_make_unique()
     sc.pp.filter_cells(adata, min_genes=50 if adata.n_vars > 100 else 5)
-    adata_raw.append(adata.copy())
-    if "RNA" in filename or "peak" in filename:
+    if "RNA" in filename or "peak" in filename or "SM" in filename:
         adata = ST_preprocess(adata)
-        adata_raw[-1] = adata_raw[-1][:, adata.var_names]
         recon_types.append('zinb')
-        omics_names.append("RNA" if "RNA" in filename else "ATAC")
+        if "RNA" in filename:
+            omics_names.append('Transcriptomics')
+        elif "peak" in filename:
+            omics_names.append('Epigenomics')
+        elif "SM" in filename:
+            omics_names.append('Metabonomics')
     elif "ADT" in filename:
         adata = clr_normalize_each_cell(adata)
         sc.pp.pca(adata)
-        omics_names.append("Protein")
+        omics_names.append("Proteomics")
         recon_types.append('nb')
     adata_combined.append(adata)
-adata_omics1 = adata_combined[0]
-adata_omics2 = adata_combined[1]
-recon_type_omics1 = recon_types[0]
-recon_type_omics2 = recon_types[1]
-for v in adata_omics1.var_names:
-    if v in adata_omics2.var_names:
-        adata_omics1.var.rename(index={v: v + '_' + omics_names[0]}, inplace=True)
-        adata_raw[0].var.rename(index={v: v + '_' + omics_names[0]}, inplace=True)
-adata_omics1 = adata_omics1[adata_omics1.obs_names.intersection(adata_omics2.obs_names), :]
-adata_omics2 = adata_omics2[adata_omics2.obs_names.intersection(adata_omics1.obs_names), :]
-adata_raw[0] = adata_raw[0][adata_omics1.obs_names.intersection(adata_omics2.obs_names), :]
-adata_raw[1] = adata_raw[1][adata_omics1.obs_names.intersection(adata_omics2.obs_names), :]
+for v in adata_combined[0].var_names:
+    if v in adata_combined[1].var_names:
+        adata_combined[0].var.rename(index={v: v + '_' + omics_names[0]}, inplace=True)
+adata_combined[0] = adata_combined[0][adata_combined[0].obs_names.intersection(adata_combined[1].obs_names), :]
+adata_combined[1] = adata_combined[1][adata_combined[1].obs_names.intersection(adata_combined[0].obs_names), :]
 
-weight_omics1 = 1
-weight_omics2 = 1
+weights = [1, 1]
 if args.reweight:
-    if adata_omics1.n_vars > adata_omics2.n_vars:
-        weight_omics2 = adata_omics1.n_vars / adata_omics2.n_vars
+    if adata_combined[0].n_vars > adata_combined[1].n_vars:
+        weights[1] = adata_combined[0].n_vars / adata_combined[1].n_vars
     else:
-        weight_omics1 = adata_omics2.n_vars / adata_omics1.n_vars
+        weights[0] = adata_combined[1].n_vars / adata_combined[0].n_vars
 
 wandb.init(project=data, config=args,
            name=str(args.zp_dim_omics1) + '_' + str(args.zs_dim) + '_' + str(args.zp_dim_omics2) + '_' + str(
-               args.beta) + '_' + str(args.learning_rate) + '_' + str(args.reweight) + '_' + str(args.seed) + '_' + str(
-               args.heads) + '_' + str(args.n_neighbors) + '_' + str(args.interpretable))
-model = SpaMV([adata_omics1, adata_omics2], zs_dim=args.zs_dim, zp_dims=[args.zp_dim_omics1, args.zp_dim_omics2],
-              weights=[weight_omics1, weight_omics2], interpretable=args.interpretable, hidden_size=args.hidden_size,
-              heads=args.heads, n_neighbors=args.n_neighbors, random_seed=args.seed,
-              recon_types=[recon_type_omics1, recon_type_omics2], omics_names=omics_names, min_epochs=100,
-              max_epochs=args.epochs, min_kl=args.beta, max_kl=args.beta, learning_rate=args.learning_rate,
-              folder_path=folder_path, n_cluster=n_cluster, test_mode=True)
+               args.kl) + '_' + str(args.learning_rate) + '_' + str(args.reweight) + '_' + str(args.seed) + '_' + str(
+               args.heads) + '_' + str(args.n_neighbors) + '_' + str(args.interpretable) + '_' + str(
+               args.detach) + '_' + str(args.distinguish))
+model = SpaMV(adata_combined, zs_dim=args.zs_dim, zp_dims=[args.zp_dim_omics1, args.zp_dim_omics2], weights=weights,
+              beta=[args.beta_0, args.beta_1], interpretable=args.interpretable, hidden_dim=args.hidden_dim,
+              heads=args.heads, n_neighbors=args.n_neighbors, random_seed=args.seed, recon_types=recon_types,
+              omics_names=omics_names, min_epochs=50, max_epochs=args.epochs, min_kl=args.kl, max_kl=args.kl,
+              learning_rate=args.learning_rate, folder_path=folder_path, n_cluster=n_cluster, test_mode=True,
+              detach=args.detach, distinguish=args.distinguish, device=device)
 model.train()
 z = model.get_embedding()
+adata_combined[0].obsm['spamv'] = F.normalize(z, p=2, eps=1e-12, dim=1).detach().cpu().numpy()
+clustering(adata_combined[0], n_clusters=n_cluster, key='spamv', add_key='spamv', method='mclust', use_pca=True)
+sc.pl.embedding(adata_combined[0], color='spamv', basis='spatial', size=100, title='All embeddings', show=False)
+plt.tight_layout()
+plt.savefig('results/' + data + '/clustering_all.pdf')
 
-adata = anndata.concat([adata_raw[0], adata_raw[1]], join='outer', axis=1)
-adata.obsm['spatial'] = adata_raw[0].obsm['spatial']
-if 'cluster' in adata_raw[0].obs:
-    adata.obs['cluster'] = adata_raw[0].obs['cluster']
-elif 'cluster' in adata_raw[1].obs:
-    adata.obs['cluster'] = adata_raw[1].obs['cluster']
+adata_combined[0].obsm['spamv_shared'] = F.normalize(z[:, :args.zs_dim], p=2, eps=1e-12, dim=1).detach().cpu().numpy()
+clustering(adata_combined[0], n_clusters=n_cluster, key='spamv_shared', add_key='spamv_shared', method='mclust',
+           use_pca=True)
+sc.pl.embedding(adata_combined[0], color='spamv_shared', basis='spatial', size=100, title='Shared embeddings',
+                show=False)
+plt.tight_layout()
+plt.savefig('results/' + data + '/clustering_shared.pdf')
+supervised_scores = compute_supervised_scores(adata_combined[0], 'spamv')
+if 'cluster' in adata_combined[0].obs:
+    print("ari: " + str(supervised_scores['ari']) + "\naverage: " + str(supervised_scores['average']))
 
-if 'cluster' in adata.obs:
-    cluster = adata.obs['cluster']
-    adata.obsm['spamv'] = z
-    clustering(adata, key='spamv', add_key='spamv', n_clusters=n_cluster, method='mclust', use_pca=True)
-    cluster_learned = adata.obs['spamv']
-    ari = adjusted_rand_score(cluster, cluster_learned)
-    mi = mutual_info_score(cluster, cluster_learned)
-    nmi = normalized_mutual_info_score(cluster, cluster_learned)
-    ami = adjusted_mutual_info_score(cluster, cluster_learned)
-    hom = homogeneity_score(cluster, cluster_learned)
-    vme = v_measure_score(cluster, cluster_learned)
-    print("ari: " + str(ari) + "\naverage: " + str((ari + mi + nmi + ami + hom + vme) / 6))
+for i in range(len(omics_names)):
+    adata_combined[i].obsm['zs'] = F.normalize(z[:, :args.zs_dim], p=2, eps=1e-12, dim=1).detach().cpu().numpy()
+    adata_combined[i].obsm['zs+zp1'] = F.normalize(z[:, :args.zs_dim + args.zp_dim_omics1], p=2, eps=1e-12,
+                                                   dim=1).detach().cpu().numpy()
+    adata_combined[i].obsm['zs+zp2'] = F.normalize(torch.cat((z[:, :args.zs_dim], z[:, -args.zp_dim_omics2:]), dim=1),
+                                                   p=2, eps=1e-12, dim=1).detach().cpu().numpy()
+    adata_combined[i].obsm['zp1'] = F.normalize(z[:, args.zs_dim:args.zs_dim + args.zp_dim_omics1], p=2, eps=1e-12,
+                                                dim=1).detach().cpu().numpy()
+    adata_combined[i].obsm['zp2'] = F.normalize(z[:, -args.zp_dim_omics2:], p=2, eps=1e-12,
+                                                dim=1).detach().cpu().numpy()
+    for emb_type in ['zs', 'zs+zp1', 'zs+zp2', 'zp1', 'zp2']:
+        print(omics_names[i], emb_type)
+        print(compute_jaccard(adata_combined[i], emb_type))

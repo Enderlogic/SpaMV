@@ -1,21 +1,22 @@
 import math
 import os.path
 
+import matplotlib.lines as mlines
 import numpy as np
 import pandas
 import pandas as pd
+import scanpy as sc
 import torch
-from matplotlib import pyplot as plt
-import matplotlib.lines as mlines
+from matplotlib import pyplot as plt, ticker
 from natsort import natsorted
 from numpy.linalg import norm
 from pandas import DataFrame
 from scanpy.plotting import embedding
 from scipy.sparse import csr_matrix
-import scanpy as sc
-from scipy.spatial.distance import pdist
 from sklearn.neighbors import kneighbors_graph
 from torch_geometric.utils import coalesce
+
+sc.set_figure_params(scanpy=True, fontsize=20)
 
 
 def construct_graph_by_coordinate(cell_position, device='cpu'):
@@ -60,6 +61,16 @@ def get_init_bg(x):
 
 def plot_embedding_results(adatas, omics_names, topic_prop, feature_topics, save=True, folder_path=None, file_name=None,
                            show=False, full=False, corresponding_features=True):
+    element_names = []
+    for omics_name in omics_names:
+        if omics_name == "Transcriptomics":
+            element_names.append("Gene")
+        elif omics_name == "Proteomics":
+            element_names.append("Protein")
+        elif omics_name == "Epigenomics":
+            element_names.append("Region of open chromatin")
+        elif omics_name == "Metabonomics":
+            element_names.append("Metabolite")
     zs_dim = len([item for item in topic_prop.columns if 'Shared' in item])
     n_omics = len(adatas)
     zp_dims = []
@@ -67,7 +78,7 @@ def plot_embedding_results(adatas, omics_names, topic_prop, feature_topics, save
         zp_dims.append(len([item for item in topic_prop.columns if omics_names[i] in item]))
     n_col = max(zp_dims + [zs_dim])
     n_row = n_omics * 3 + 1 if corresponding_features else n_omics + 1
-    fig, axes = plt.subplots(n_row, n_col, figsize=(n_col * 5, n_row * 4))
+    fig, axes = plt.subplots(n_row, n_col, figsize=(n_col * 6, n_row * 5))
     if zs_dim < n_col:
         for i in range(n_col - zs_dim):
             for j in range(1 + n_omics if corresponding_features else 1):
@@ -85,7 +96,13 @@ def plot_embedding_results(adatas, omics_names, topic_prop, feature_topics, save
             for j in range(n_omics):
                 mrf = feature_topics[j].nlargest(1, topic_name).index[0]
                 embedding(adatas[j], color=mrf, vmax='p99', basis='spatial', size=100, show=False, ax=axes[1 + j, i],
-                          title=mrf + '\nMost relevant ' + omics_names[j] + ' w.r.t. ' + topic_name)
+                          title=mrf + '\nMost relevant ' + element_names[j] + '\nw.r.t. ' + topic_name)
+    for i in range(zs_dim):
+        for j in range(n_omics + 1 if corresponding_features else 1):
+            axes[j, i].set_xlabel('')  # Remove x-axis label
+            axes[j, i].set_ylabel('')  # Remove y-axis label
+            axes[j, i].set_xticks([])  # Remove x-axis ticks
+            axes[j, i].set_yticks([])  # Remove y-axis ticks
     for i in range(n_omics):
         for j in range(zp_dims[i]):
             topic_name = feature_topics[i].columns[zs_dim + j]
@@ -94,8 +111,21 @@ def plot_embedding_results(adatas, omics_names, topic_prop, feature_topics, save
             if corresponding_features:
                 mrf = feature_topics[i].nlargest(1, topic_name).index[0]
                 embedding(adatas[i], color=mrf, vmax='p99', size=100, show=False, basis='spatial',
-                          title=mrf + '\nMost relevant ' + omics_names[i] + ' w.r.t. ' + topic_name,
+                          title=mrf + '\nMost relevant ' + element_names[i] + '\nw.r.t. ' + topic_name,
                           ax=axes[1 + n_omics + i * n_omics + 1, j])
+    for i in range(n_omics):
+        for j in range(zp_dims[i]):
+            if corresponding_features:
+                for k in range(2):
+                    axes[1 + n_omics * (i + 1) + k, j].set_xlabel('')
+                    axes[1 + n_omics * (i + 1) + k, j].set_ylabel('')
+                    axes[1 + n_omics * (i + 1) + k, j].set_xticks([])
+                    axes[1 + n_omics * (i + 1) + k, j].set_yticks([])
+            else:
+                axes[1 + i, j].set_xlabel('')
+                axes[1 + i, j].set_ylabel('')
+                axes[1 + i, j].set_xticks([])
+                axes[1 + i, j].set_yticks([])
     plt.tight_layout()
     if save:
         if not os.path.exists(folder_path):
@@ -136,10 +166,21 @@ def replace_legend(legend_texts):
 
 
 def plot_clustering_results(adata, cluster_name, omics_names, folder_path, show=False, suffix=None):
-    max_length = max([len(item) for item in adata.obs[cluster_name].unique()])
+    max_width = max([len(item) for item in adata.obs[cluster_name].unique()])
     max_height = adata.obs[cluster_name].nunique()
+    max_private_topics = 0
+    for omics_name in omics_names:
+        max_private_topics = max(max_private_topics,
+                                 len([item for item in adata.obs[cluster_name].unique() if omics_name in item]))
+    width = 5 + max_width * .12
+    height = 4 if max_height < max_private_topics + 1 else 4 + (max_height - max_private_topics - 1) * .2
     adata.obs[cluster_name] = pandas.Categorical(values=adata.obs[cluster_name].values,
                                                  categories=natsorted(adata.obs[cluster_name].unique()), ordered=True)
+    adata.obs[cluster_name] = adata.obs[cluster_name].cat.reorder_categories(
+        [item for item in natsorted(adata.obs[cluster_name].unique()) if 'Shared' not in item] + [item for item in
+                                                                                                  natsorted(adata.obs[
+                                                                                                                cluster_name].unique())
+                                                                                                  if 'Shared' in item])
     import seaborn as sns
     higher_class_palette = sns.color_palette("Set1", 3)
     high_classes = ['Shared'] + omics_names
@@ -156,12 +197,12 @@ def plot_clustering_results(adata, cluster_name, omics_names, folder_path, show=
             groups = adata.obs[cluster_name].unique()
         else:
             groups = [item for item in adata.obs[cluster_name].unique() if group_name in item]
-        fig, ax = plt.subplots(figsize=(5 + max_length * .12, 4 if max_height < 9 else 4 + (max_height - 9) * .13))
+        fig, ax = plt.subplots(figsize=(width, height))
         sc.pl.embedding(adata, color=cluster_name, basis='spatial', vmax='p99', size=100,
                         title=group_name + ' topics' if group_name in ['All',
                                                                        'Shared'] else group_name + ' private topics',
                         show=False, groups=groups, ax=ax, palette=adata.uns['colors'])
-        plt.plot([], [], label=' ' * (max_length + 14))
+        plt.plot([], [], label=' ' * (max_width + 19))
         handles, labels = ax.get_legend_handles_labels()
         handles[-1] = mlines.Line2D([], [], color='white')
         plt.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.48), frameon=False)
@@ -310,7 +351,9 @@ def clustering(adata, n_clusters=7, key='emb', add_key='SpatialGlue', method='mc
     """
 
     if use_pca:
-        adata.obsm[key + '_pca'] = pca(adata, use_reps=key, n_comps=n_comps)
+        adata.obsm[key + '_pca'] = pca(adata, use_reps=key,
+                                       n_comps=n_comps if adata.obsm[key].shape[1] > n_comps else adata.obsm[key].shape[
+                                           1])
 
     if method == 'mclust':
         if use_pca:

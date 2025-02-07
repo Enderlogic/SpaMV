@@ -1,30 +1,15 @@
 import argparse
 import os
-from pathlib import Path
 
-import anndata
-import numpy
 import numpy as np
 import pandas
 import scanpy as sc
 from matplotlib import pyplot as plt
-from numpy.linalg import norm
-from sklearn.metrics import adjusted_rand_score, mutual_info_score, normalized_mutual_info_score, \
-    adjusted_mutual_info_score, homogeneity_score, v_measure_score
 from tqdm import tqdm
 
-from SpatialGlue.utils import clustering
-
 import wandb
-
-from SpaMV.metrics import compute_supervised_scores
 from SpaMV.spamv import SpaMV
-from SpaMV.utils import ST_preprocess, clr_normalize_each_cell, plot_embedding_results
-
-
-def cosine_similarity(A, B):
-    return np.dot(A, B) / (norm(A) * norm(B))
-
+from SpaMV.utils import ST_preprocess, clr_normalize_each_cell, plot_embedding_results, cosine_similarity
 
 sc._settings.ScanpyConfig.figdir = '.'
 # Argument to parse
@@ -34,14 +19,16 @@ parser.add_argument('--data', type=str, default='Dataset12_Human_Lymph_Node_D1')
 parser.add_argument('--zp_dim_omics1', type=int, default=10, help='latent modality 1-specific dimensionality')
 parser.add_argument('--zp_dim_omics2', type=int, default=10, help='latent modality 2-specific dimensionality')
 parser.add_argument('--zs_dim', type=int, default=10, help='latent shared dimensionality')
-parser.add_argument('--hidden_size', type=int, default=128, help='hidden layer size')
+parser.add_argument('--hidden_dim', type=int, default=128, help='hidden layer dimensionality')
 parser.add_argument('--heads', type=int, default=1, help='number of heads in GAT')
 parser.add_argument('--n_neighbors', type=int, default=20, help='number of neighbors in GNN')
 parser.add_argument('--seed', type=int, default=20, help='random seed')
 parser.add_argument('--beta', type=float, default=1, help='beta hyperparameter in VAE objective')
 parser.add_argument('--learning_rate', type=float, default=1e-2, help='learning rate')
 parser.add_argument('--interpretable', type=bool, default=True, help='whether to use interpretable mode')
-parser.add_argument('--reweight', type=bool, default=True, help='reweight the loss of different modalities')
+parser.add_argument('--reweight', type=bool, default=False, help='reweight the loss of different modalities')
+parser.add_argument('--detach', type=bool, default=True, help='whether to use detach')
+parser.add_argument('--distinguish', type=bool, default=True, help='whether to use distinguish')
 
 # Args
 args = parser.parse_args()
@@ -58,18 +45,6 @@ adata_combined = []
 adata_raw = []
 omics_names = []
 recon_types = []
-if 'Spleen' in data:
-    n_cluster = 5
-elif 'Lymph_Node' in data:
-    n_cluster = 10
-elif 'Thymus' in data:
-    n_cluster = 8
-elif 'Brain' in data:
-    n_cluster = 18
-elif 'R114_T' in data:
-    n_cluster = 22
-else:
-    raise ValueError
 for filename in os.listdir(root_path + data + "/"):
     adata = sc.read_h5ad(root_path + data + "/" + filename)
     adata.var_names_make_unique()
@@ -79,66 +54,77 @@ for filename in os.listdir(root_path + data + "/"):
         adata = ST_preprocess(adata, prune=True)
         adata_raw[-1] = adata_raw[-1][:, adata.var_names]
         recon_types.append('nb')
-        if 'RNA' in filename:
-            omics_names.append('RNA')
-        elif 'peak' in filename:
-            omics_names.append('ATAC')
-        else:
-            omics_names.append('SM')
+        if "RNA" in filename:
+            omics_names.append('Transcriptomics')
+        elif "peak" in filename:
+            omics_names.append('Epigenomics')
+        elif "SM" in filename:
+            omics_names.append('Metabonomics')
     elif "ADT" in filename:
         adata = clr_normalize_each_cell(adata)
         sc.pp.pca(adata)
-        omics_names.append("Protein")
+        omics_names.append("Proteomics")
         recon_types.append('nb')
     adata_combined.append(adata)
-adata_omics1 = adata_combined[0]
-adata_omics2 = adata_combined[1]
-recon_type_omics1 = recon_types[0]
-recon_type_omics2 = recon_types[1]
-adata_omics1 = adata_omics1[adata_omics1.obs_names.intersection(adata_omics2.obs_names), :]
-adata_omics2 = adata_omics2[adata_omics2.obs_names.intersection(adata_omics1.obs_names), :]
-adata_raw[0] = adata_raw[0][adata_omics1.obs_names.intersection(adata_omics2.obs_names), :]
-adata_raw[1] = adata_raw[1][adata_omics1.obs_names.intersection(adata_omics2.obs_names), :]
+adata_combined[0] = adata_combined[0][adata_combined[0].obs_names.intersection(adata_combined[1].obs_names), :]
+adata_combined[1] = adata_combined[1][adata_combined[0].obs_names.intersection(adata_combined[1].obs_names), :]
+adata_raw[0] = adata_raw[0][adata_combined[0].obs_names.intersection(adata_combined[1].obs_names), :]
+adata_raw[1] = adata_raw[1][adata_combined[0].obs_names.intersection(adata_combined[1].obs_names), :]
 
-weight_omics1 = 1
-weight_omics2 = 1
+weights = [1, 1]
 if args.reweight:
-    if adata_omics1.n_vars > adata_omics2.n_vars:
-        weight_omics2 = adata_omics1.n_vars / adata_omics2.n_vars
+    if adata_combined[0].n_vars > adata_combined[1].n_vars:
+        weights[1] = adata_combined[0].n_vars / adata_combined[1].n_vars
     else:
-        weight_omics1 = adata_omics2.n_vars / adata_omics1.n_vars
+        weights[0] = adata_combined[1].n_vars / adata_combined[0].n_vars
 
-wandb.init(project=data, config=args,
+wandb.init(project=data, config=args, settings=dict(init_timeout=600),
            name=str(args.zp_dim_omics1) + '_' + str(args.zs_dim) + '_' + str(args.zp_dim_omics2) + '_' + str(
                args.beta) + '_' + str(args.learning_rate) + '_' + str(args.reweight) + '_' + str(args.seed) + '_' + str(
                args.heads) + '_' + str(args.n_neighbors) + '_' + str(args.interpretable))
-model = SpaMV([adata_omics1, adata_omics2], zs_dim=args.zs_dim, zp_dims=[args.zp_dim_omics1, args.zp_dim_omics2],
-              weights=[weight_omics1, weight_omics2], interpretable=args.interpretable, hidden_size=args.hidden_size,
+model = SpaMV(adata_combined, zs_dim=args.zs_dim, zp_dims=[args.zp_dim_omics1, args.zp_dim_omics2],
+              weights=weights, interpretable=args.interpretable, hidden_dim=args.hidden_dim,
               heads=args.heads, n_neighbors=args.n_neighbors, random_seed=args.seed,
-              recon_types=[recon_type_omics1, recon_type_omics2], omics_names=omics_names, min_epochs=100,
+              recon_types=recon_types, omics_names=omics_names, min_epochs=50,
               max_epochs=args.epochs, min_kl=args.beta, max_kl=args.beta, learning_rate=args.learning_rate,
-              folder_path=folder_path, n_cluster=n_cluster, test_mode=True)
+              folder_path=folder_path, test_mode=False, detach=args.detach, distinguish=args.distinguish)
 model.train()
+
+z, w = model.get_embedding_and_feature_by_topic()
+z.to_csv(folder_path + 'embedding_without_map.csv')
+w[0].to_csv(folder_path + 'weight_' + omics_names[0] + '_without_map.csv')
+w[1].to_csv(folder_path + 'weight_' + omics_names[1] + '_without_map.csv')
+plot_embedding_results(adata_raw, omics_names, z, w, save=True, show=False, corresponding_features=False,
+                       folder_path=folder_path, file_name='spamv_interpretable_' + str(args.detach) + '_' + str(
+        args.distinguish) + '_without_features_without_map.pdf')
+plot_embedding_results(adata_raw, omics_names, z, w, save=True, show=False, corresponding_features=True,
+                       folder_path=folder_path, file_name='spamv_interpretable_' + str(args.detach) + '_' + str(
+        args.distinguish) + '_with_features_without_map.pdf')
+
 z, w = model.get_embedding_and_feature_by_topic(map=True)
-z.to_csv(folder_path + 'embedding.csv')
-w[0].to_csv(folder_path + 'weight_' + omics_names[0] + '.csv')
-w[1].to_csv(folder_path + 'weight_' + omics_names[1] + '.csv')
+z.to_csv(folder_path + 'embedding_map.csv')
+w[0].to_csv(folder_path + 'weight_' + omics_names[0] + '_map.csv')
+w[1].to_csv(folder_path + 'weight_' + omics_names[1] + '_map.csv')
+plot_embedding_results(adata_raw, omics_names, z, w, save=True, show=False, corresponding_features=False,
+                       folder_path=folder_path, file_name='spamv_interpretable_' + str(args.detach) + '_' + str(
+        args.distinguish) + '_without_features_with_map.pdf')
+plot_embedding_results(adata_raw, omics_names, z, w, save=True, show=False, corresponding_features=True,
+                       folder_path=folder_path, file_name='spamv_interpretable_' + str(args.detach) + '_' + str(
+        args.distinguish) + '_with_features_with_map.pdf')
 
 plot_embedding_results(adata_raw, omics_names, z, w, folder_path=folder_path, file_name='spamv_interpretable.pdf')
 
-scores = compute_supervised_scores(adata_omics1, z)
-print("ari: {:.3f}, average: {:.3f}".format(scores['ari'], scores['average']))
-cs_omics1 = pandas.DataFrame(np.zeros((adata_omics1.shape[1], z.shape[1])), columns=z.columns,
-                             index=adata_omics1.var_names)
-cs_omics2 = pandas.DataFrame(np.zeros((adata_omics2.shape[1], z.shape[1])), columns=z.columns,
-                             index=adata_omics2.var_names)
+cs_omics1 = pandas.DataFrame(np.zeros((adata_combined[0].shape[1], z.shape[1])), columns=z.columns,
+                             index=adata_combined[0].var_names)
+cs_omics2 = pandas.DataFrame(np.zeros((adata_combined[1].shape[1], z.shape[1])), columns=z.columns,
+                             index=adata_combined[1].var_names)
 
 for topic in tqdm(z.columns):
-    for feature in adata_omics1.var_names:
-        cs_omics1.loc[feature, topic] = cosine_similarity(adata_omics1[:, feature].X.toarray()[:, 0],
+    for feature in adata_combined[0].var_names:
+        cs_omics1.loc[feature, topic] = cosine_similarity(adata_combined[0][:, feature].X.toarray()[:, 0],
                                                           z.loc[:, topic])
-    for feature in adata_omics2.var_names:
-        cs_omics2.loc[feature, topic] = cosine_similarity(adata_omics2[:, feature].X.toarray()[:, 0],
+    for feature in adata_combined[1].var_names:
+        cs_omics2.loc[feature, topic] = cosine_similarity(adata_combined[1][:, feature].X.toarray()[:, 0],
                                                           z.loc[:, topic])
 plot_df = pandas.DataFrame()
 plot_df['label'] = cs_omics1.columns
