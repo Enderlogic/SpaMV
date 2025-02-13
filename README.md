@@ -10,8 +10,3 @@ To run the model for one time with interpretable mode, please use the following 
 python main_interpretable.py
 ```
 
-To run the model on all data sets with interpretable mode, please use the following code
-```
-python Evaluation_interpretable.py
-```
-
