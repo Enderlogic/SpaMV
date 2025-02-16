@@ -20,7 +20,7 @@ scale_init = math.log(0.01)
 class spamv(PyroModule):
     def __init__(self, data_dims: List[int], zs_dim: int, zp_dims: List[int], init_bg_means: List[Tensor],
                  weights: List[float], hidden_size: int, recon_types: List[str], heads: int, interpretable: bool,
-                 detach: bool, device: torch.device, omics_names: List[str]):
+                 device: torch.device, omics_names: List[str]):
         super().__init__()
 
         self.data_dims = data_dims
@@ -31,7 +31,6 @@ class spamv(PyroModule):
         self.weights = weights
         self.interpretable = interpretable
         self.prior = LogNormal if interpretable else Normal
-        self.detach = detach
         self.recon_types = recon_types
         self.device = device
         self.omics_names = omics_names
@@ -67,7 +66,8 @@ class spamv(PyroModule):
                 setattr(self, 'lambda_mean_' + omics_names[i],
                         PyroParam(torch.zeros((self.latent_dims[i], data_dims[i]), device=device)))
                 setattr(self, 'lambda_std_' + omics_names[i],
-                        PyroParam(self._ones_init((self.latent_dims[i], data_dims[i]), device=device)))
+                        PyroParam(self._ones_init((self.latent_dims[i], data_dims[i]), device=device),
+                                  constraint=constraints.positive))
                 setattr(self, 'beta_mean_' + omics_names[i],
                         PyroParam(torch.zeros((self.latent_dims[i], data_dims[i]), device=device)))
                 setattr(self, 'beta_std_' + omics_names[i],
@@ -153,31 +153,36 @@ class spamv(PyroModule):
                                                device=device) if self.interpretable else Normal(
                         torch.zeros(self.zp_dims[i], device=device),
                         getattr(self, "zp_aux_std_" + self.omics_names[i])).rsample((d.shape[0],)))
+                else:
+                    zps.append(None)
+                    zp_auxs.append(None)
         for i in range(len(data)):
             for j in range(len(data)):
                 if i == j:
                     # self reconstruction
-                    if self.detach:
-                        z = torch.cat((zss[i].detach(), zps[j]), dim=1) if self.zp_dims[j] > 0 else zss[i].detach()
-                    else:
-                        z = torch.cat((zss[i], zps[j]), dim=1) if self.zp_dims[j] > 0 else zss[i]
+                    # z = torch.cat((zss[i].detach(), zps[j]), dim=1) if self.zp_dims[j] > 0 else zss[i].detach()
+                    z = torch.cat((zss[i], zps[j]), dim=1) if self.zp_dims[j] > 0 else zss[i]
                 else:
                     # cross reconstruction (using shared embedding from data i to reconstruct data j)
                     z = torch.cat((zss[i], zp_auxs[j]), dim=1) if self.zp_dims[j] > 0 else zss[i]
+                    # z = torch.cat((zss[i], zps[j]), dim=1) if self.zp_dims[j] > 0 else zss[i]
                 if self.interpretable:
                     x_tilde = z @ F.softplus(betas[j])
                     x_tilde = x_tilde.clamp(min=1e-10)
                     x_tilde = lss[j] * x_tilde / x_tilde.sum(1, keepdim=True)
                     if self.recon_types[j] == 'zinb':
-                        zi_logits = getattr(self, "decoder_zi_logits_" + self.omics_names[j])(z)
+                        logits = getattr(self, "decoder_zi_logits_" + self.omics_names[j])(z)
                 else:
                     if self.recon_types[j] == 'nb':
                         x_tilde = getattr(self, "decoder_" + self.omics_names[j])(z)
-                    elif self.recon_types[j] == 'zinb':
-                        x_tilde, zi_logits = getattr(self, "decoder_" + self.omics_names[j])(z)
+                    elif self.recon_types[j] in ['zinb', 'gauss']:
+                        x_tilde, logits = getattr(self, "decoder_" + self.omics_names[j])(z)
                     else:
                         raise NotImplementedError
-                    x_tilde = x_tilde.clamp(min=1e-10, max=1e8)
+                    # x_tilde = x_tilde.clamp(min=1e-10)
+                    # x_tilde = lss[j] * x_tilde / x_tilde.sum(1, keepdim=True)
+                    if self.recon_types[j] in ['zinb', 'nb']:
+                        x_tilde = x_tilde.clamp(min=1e-10, max=1e8)
                 with sample_plate:
                     with poutine.scale(scale=self.weights[j]):
                         if self.recon_types[j] == 'nb':
@@ -189,10 +194,13 @@ class spamv(PyroModule):
                         elif self.recon_types[j] == 'zinb':
                             pyro.sample("recon_" + self.omics_names[j] + "_from_" + self.omics_names[i],
                                         ZINB(x_tilde, getattr(self, "disp_" + self.omics_names[j]).exp(),
-                                             zi_logits).to_event(1), obs=data[j])
+                                             logits).to_event(1), obs=data[j])
                             # pyro.sample("recon_{}_from_{}".format(j, i),
                             #             ZINB(x_tilde, getattr(self, "disp_{}".format(j)), zi_logits).to_event(1),
                             #             obs=data[j])
+                        elif self.recon_types[j] == 'gauss':
+                            pyro.sample("recon_" + self.omics_names[j] + "_from_" + self.omics_names[i],
+                                        Normal(x_tilde, logits.exp()).to_event(1), obs=data[j])
                         else:
                             raise NotImplementedError
 
@@ -282,6 +290,19 @@ class spamv(PyroModule):
                             self.prior(zp_mean, zp_scale if self.interpretable else (zp_scale / 2).exp()).rsample())
         return torch.cat(zp, dim=1)
 
+    def get_separate_latents(self, data, edge_index):
+        self.eval()
+        output = {}
+        with torch.no_grad():
+            for i, d, e in zip(range(len(data)), data, edge_index):
+                zs_mean, zs_scale = getattr(self, "zs_encoder_" + self.omics_names[i])(d, e)
+                output['zs_' + self.omics_names[i]] = self.mean(zs_mean, zs_scale) if self.interpretable else zs_mean
+                if self.zp_dims[i] > 0:
+                    zp_mean, zp_scale = getattr(self, "zp_encoder_" + self.omics_names[i])(d, e)
+                    output['zp_' + self.omics_names[i]] = self.mean(zp_mean,
+                                                                    zp_scale) if self.interpretable else zp_mean
+        return output
+
     @torch.inference_mode()
     def get_feature_by_topic(self):
         if self.interpretable:
@@ -297,8 +318,11 @@ class spamv(PyroModule):
                               getattr(self, 'c_std_' + self.omics_names[i]))
                 lambda_tilde = (c ** 2 * tau ** 2 * delta ** 2 * lambda_ ** 2 / (
                         c ** 2 + tau ** 2 * delta ** 2 * lambda_ ** 2)).sqrt()
-                beta = getattr(self, 'beta_mean_'+ self.omics_names[i]) * lambda_tilde
-                betas.append(beta.detach().cpu().numpy().transpose())
+                beta = getattr(self, 'beta_mean_' + self.omics_names[i]) * lambda_tilde
+                bg = getattr(self, 'bg_mean_' + self.omics_names[i]) + self.init_bg_means[i]
+                bg = bg.exp()
+                adj = (bg + torch.quantile(bg, .1)).log() - bg.log()
+                betas.append((beta - adj).detach().cpu().numpy().transpose())
         else:
             raise Exception("Please set interpretable=True to use this function.")
         return betas
