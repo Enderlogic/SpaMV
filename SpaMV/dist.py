@@ -10,7 +10,6 @@ from torch.distributions.utils import broadcast_all, lazy_property, logits_to_pr
 
 from scvi import settings
 
-
 def log_zinb_positive(x: torch.Tensor, mu: torch.Tensor, theta: torch.Tensor, zi_probs: torch.Tensor,
                       eps: float = 1e-8) -> torch.Tensor:
     """Log likelihood (scalar) of a minibatch according to a zinb model.

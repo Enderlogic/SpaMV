@@ -3,51 +3,48 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATv2Conv, BatchNorm
 
-
 class MLPEncoder(nn.Module):
-    def __init__(self, in_dim, hidden_dim, out_dim, heads=1, interpretable=True):
-        super().__init__()
+    def __init__(self, in_dim, hidden_dim, out_dim, heads=1):
+        super(MLPEncoder, self).__init__()
         self.out_dim = out_dim
-        self.interpretable = interpretable
         self.conv1 = GATv2Conv(in_dim, hidden_dim, heads=heads)
+        # self.conv1 = GATv2Conv(in_dim, hidden_dim, heads=heads, dropout=dropout_prob)
         self.batch_norm1 = BatchNorm(hidden_dim * heads)
+        # self.dropout = nn.Dropout(dropout_prob)
+        # self.conv2 = GATv2Conv(hidden_dim * heads, out_dim * 2, heads=heads, dropout=dropout_prob, concat=False)
         self.conv2 = GATv2Conv(hidden_dim * heads, out_dim * 2, heads=heads, concat=False)
         self.batch_norm2 = BatchNorm(out_dim, affine=False)
 
     def forward(self, x, edge_index):
-        # x = F.relu(self.conv1(x, edge_index))
-        # output = self.conv2(x, edge_index)
         x = F.relu(self.batch_norm1(self.conv1(x, edge_index)))
+        # x = self.dropout(x)
         output = self.conv2(x, edge_index)
-        if self.interpretable:
-            # return output[:, :self.out_dim], output[:, self.out_dim:]
-            return self.batch_norm2(output[:, :self.out_dim]), F.sigmoid(output[:, self.out_dim:])
-        else:
-            # return output[:, :self.out_dim], output[:, self.out_dim:]
-            return self.batch_norm2(output[:, :self.out_dim]), output[:, self.out_dim:]
+        return torch.cat([self.batch_norm2(output[:, :self.out_dim]), F.softplus(output[:, self.out_dim:])], dim=1)
 
 
 class Decoder(nn.Module):
     def __init__(self, z_dim, hidden_size, out_dim, recon_type='nb'):
-        super().__init__()
+        super(Decoder, self).__init__()
         # setup the two linear transformations used
         self.recon_type = recon_type
         self.fc1 = nn.Linear(z_dim, hidden_size)
         self.fc2 = nn.Linear(hidden_size, out_dim)
-        if recon_type == 'zinb':
-            self.zi_logits = nn.Linear(hidden_size, out_dim)
+        if recon_type in ['zinb']:
+            self.logits = nn.Linear(hidden_size, out_dim)
 
     def forward(self, z):
         hidden = F.relu(self.fc1(z))
         if self.recon_type == 'zinb':
-            return F.softplus(self.fc2(hidden)), self.zi_logits(hidden)
-        else:
+            return F.softplus(self.fc2(hidden)), self.logits(hidden)
+        elif self.recon_type == 'nb':
             return F.softplus(self.fc2(hidden))
+        elif self.recon_type == 'gauss':
+            return self.fc2(hidden)
 
 
 class Decoder_zi_logits(nn.Module):
     def __init__(self, z_dim, hidden_size, out_dim):
-        super().__init__()
+        super(Decoder_zi_logits, self).__init__()
         self.fc1 = nn.Linear(z_dim, hidden_size)
         self.fc2 = nn.Linear(hidden_size, out_dim)
 
@@ -56,9 +53,9 @@ class Decoder_zi_logits(nn.Module):
         return self.fc2(hidden)
 
 
-class Distinguished_Decoder(nn.Module):
+class Measurement(nn.Module):
     def __init__(self, zp_dims, hidden_dim, data_dims, recon_types, omics_names, interpretable):
-        super(Distinguished_Decoder, self).__init__()
+        super(Measurement, self).__init__()
         self.recon_types = recon_types
         self.omics_names = omics_names
         self.interpretable = interpretable
@@ -70,10 +67,13 @@ class Distinguished_Decoder(nn.Module):
                 if i != j:
                     name = "from_" + omics_names[i] + "_to_" + omics_names[j]
                     if interpretable:
-                        self.w[name] = nn.Parameter(torch.randn(zp_dims[i], data_dims[j]))
+                        # self.w[name] = nn.Parameter(torch.randn(zp_dims[i], data_dims[j]))
+                        self.fc1[name] = nn.Linear(zp_dims[i], hidden_dim)
+                        self.fc2[name] = nn.Linear(hidden_dim, data_dims[j])
                     else:
                         self.fc1[name] = nn.Linear(zp_dims[i], hidden_dim)
                         self.fc2[name] = nn.Linear(hidden_dim, data_dims[j])
+
     def forward(self, zps):
         output = {}
         for i in range(len(self.omics_names)):
@@ -81,9 +81,30 @@ class Distinguished_Decoder(nn.Module):
                 if i != j:
                     name = "from_" + self.omics_names[i] + "_to_" + self.omics_names[j]
                     if self.interpretable:
-                        output[name] = zps[i] @ F.softplus(self.w[name])
+                        # output[name] = zps[i] @ F.softplus(self.w[name])
+                        # output[name] = F.softmax(zps[i], 1) @ F.softmax(self.w[name], 1)
+                        hidden = F.relu(self.fc1[name](zps[i]))
+                        if self.recon_types[j] == 'gauss':
+                            output[name] = self.fc2[name](hidden)
+                        else:
+                            output[name] = F.softmax(self.fc2[name](hidden), 1)
+                            # output[name] = self.fc2[name](hidden)
                     else:
                         hidden = F.relu(self.fc1[name](zps[i]))
-                        output[name] = F.softplus(self.fc2[name](hidden))
-                    output[name] = output[name].clamp(min=1e-10, max=1e8)
+                        if self.recon_types[j] == 'gauss':
+                            output[name] = self.fc2[name](hidden)
+                        else:
+                            output[name] = F.softplus(self.fc2[name](hidden))
         return output
+
+
+class Discriminator(nn.Module):
+    def __init__(self, z_dim, hidden_dim):
+        super(Discriminator, self).__init__()
+        self.fc1 = nn.Linear(z_dim, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, 1)
+
+    def forward(self, z):
+        z = F.relu(self.fc1(z))
+        z = F.sigmoid(self.fc2(z))
+        return z
