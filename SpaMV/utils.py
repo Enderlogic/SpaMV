@@ -356,24 +356,46 @@ def lsi(
     adata.obsm[key_added] = X_lsi[:, 1:]
 
 
-def preprocess_dc(datasets: List[AnnData], omics_names: List[str], scale: bool = False):
+def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool = True, hvg: bool = True, n_top_genes: int = 3000, normalize: bool = True, target_sum: int = 1e4, log1p: bool=True, scale: bool = False, ):
     '''
     # preprocess step for domain clustering
+    
+    Parameters
+    ----------
+    datasets: List
+        List of AnnData objects of scanpy package.
+    omics_names: List
+        List of omics names for each data.
+    prune : Bool
+        Whether or not to prune low quality features and spots.
+    hvg: Bool
+        Whether or not to select highly variable genes.
+    n_top_genes: Int
+        Number of remained highly variable genes.
+    normalize: Bool
+        Whether or not to normalize the data.
+    target_sum: Int
+        Target of sum of each row.
+    log1p: Bool
+        Whether or not perform log 1p transformation.
+    scale: Bool
+        Whether or not the scale the data with zero mean and standard deviation 
     '''
     # prune low quality features and spots
-    for i in range(len(datasets)):
-        sc.pp.filter_genes(datasets[i], min_cells=round(datasets[i].n_obs / 100))
-        sc.pp.filter_cells(datasets[i], min_genes=round(datasets[i].n_vars / 100))
-        # sc.pp.filter_genes(datasets[i], min_cells=10)
-        # sc.pp.filter_cells(datasets[i], min_genes=200)
-        if any(substring.lower() in omics_names[i].lower() for substring in ['Transcriptomics', 'RNA', 'Gene']):
-            datasets[i].var['mt'] = np.logical_or(datasets[i].var_names.str.startswith('MT-'),
-                                                  datasets[i].var_names.str.startswith('mt-'))
-            datasets[i].var['rb'] = datasets[i].var_names.str.startswith(('RP', 'Rp', 'rp'))
-            sc.pp.calculate_qc_metrics(datasets[i], qc_vars=['mt'], inplace=True)
-            mask_cell = datasets[i].obs['pct_counts_mt'] < 100
-            mask_gene = np.logical_and(~datasets[i].var['mt'], ~datasets[i].var['rb'])
-            datasets[i] = datasets[i][mask_cell, mask_gene]
+    if prune:
+        for i in range(len(datasets)):
+            sc.pp.filter_genes(datasets[i], min_cells=round(datasets[i].n_obs / 100))
+            sc.pp.filter_cells(datasets[i], min_genes=round(datasets[i].n_vars / 100))
+            # sc.pp.filter_genes(datasets[i], min_cells=10)
+            # sc.pp.filter_cells(datasets[i], min_genes=200)
+            if any(substring.lower() in omics_names[i].lower() for substring in ['Transcriptomics', 'RNA', 'Gene']):
+                datasets[i].var['mt'] = np.logical_or(datasets[i].var_names.str.startswith('MT-'),
+                                                    datasets[i].var_names.str.startswith('mt-'))
+                datasets[i].var['rb'] = datasets[i].var_names.str.startswith(('RP', 'Rp', 'rp'))
+                sc.pp.calculate_qc_metrics(datasets[i], qc_vars=['mt'], inplace=True)
+                mask_cell = datasets[i].obs['pct_counts_mt'] < 100
+                mask_gene = np.logical_and(~datasets[i].var['mt'], ~datasets[i].var['rb'])
+                datasets[i] = datasets[i][mask_cell, mask_gene]
     remained_spots = datasets[0].obs_names
     n_comps = min(50, datasets[0].n_vars - 1)
     for i in range(1, len(datasets)):
@@ -382,10 +404,13 @@ def preprocess_dc(datasets: List[AnnData], omics_names: List[str], scale: bool =
     for i in range(len(datasets)):
         datasets[i] = datasets[i][remained_spots, :]
         if any(substring.lower() in omics_names[i].lower() for substring in ['Transcriptomics', 'RNA', 'Gene']):
-            sc.pp.highly_variable_genes(datasets[i], flavor='seurat_v3', n_top_genes=3000, subset=False)
-            sc.pp.normalize_total(datasets[i], target_sum=1e4)
+            if hvg:
+                sc.pp.highly_variable_genes(datasets[i], flavor='seurat_v3', n_top_genes=n_top_genes, subset=False)
+            if normalize:
+                sc.pp.normalize_total(datasets[i], target_sum=target_sum)
             datasets[i] = datasets[i][:, datasets[i].var.highly_variable]
-            sc.pp.log1p(datasets[i])
+            if log1p:
+                sc.pp.log1p(datasets[i])
             if scale:
                 sc.pp.scale(datasets[i])
             # datasets[i] = anndata.AnnData(pca(datasets[i], n_comps=n_comps), obs=datasets[i].obs, obsm=datasets[i].obsm, uns=datasets[i].uns)
@@ -399,8 +424,14 @@ def preprocess_dc(datasets: List[AnnData], omics_names: List[str], scale: bool =
         elif any(substring.lower() in omics_names[i].lower() for substring in ['Epigenomics', 'peaks']):
             lsi(datasets[i], use_highly_variable=False, n_components=n_comps + 1, key_added='embedding')
         elif any(substring.lower() in omics_names[i].lower() for substring in ['Metabolomics', 'Metabolite']):
-            sc.pp.normalize_total(datasets[i], target_sum=1e4)
-            sc.pp.log1p(datasets[i])
+            if normalize:
+                sc.pp.normalize_total(datasets[i], target_sum=target_sum)
+            if log1p:
+                sc.pp.log1p(datasets[i])
+            if scale:
+                sc.pp.scale(datasets[i])
+            sc.pp.pca(datasets[i], n_comps=n_comps, key_added='embedding')
+        elif any(substring.lower() in omics_names[i].lower() for substring in ['H3K27ac', 'H3K27me3']):
             if scale:
                 sc.pp.scale(datasets[i])
             sc.pp.pca(datasets[i], n_comps=n_comps, key_added='embedding')
@@ -415,10 +446,21 @@ def log_mean_exp(value, dim=0, keepdim=False):
     return torch.logsumexp(value, dim, keepdim=keepdim) - math.log(value.size(dim))
 
 
-def mclust_R(adata, num_cluster, modelNames='EEE', used_obsm='emb_pca', random_seed=2025):
+def mclust(adata, n_clusters, modelNames='EEE', key='emb', add_key='SpaMV_old', random_seed=2025):
     """\
     Clustering using the mclust algorithm.
     The parameters are the same as those in the R package mclust.
+
+    Parameters
+    ----------
+    adata: anndata
+        AnnData object of scanpy package.
+    n_clusters : int
+        The number of clusters.
+    key: string
+        The key of the input representation in adata.obsm. The default is 'emb'.
+    add_key: string
+        The key of the output clustering result in adata.obs. The default is 'SpaMV_old'
     """
 
     np.random.seed(random_seed)
@@ -426,17 +468,17 @@ def mclust_R(adata, num_cluster, modelNames='EEE', used_obsm='emb_pca', random_s
     robjects.r.library("mclust")
 
     import rpy2.robjects.numpy2ri
-    rpy2.robjects.numpy2ri.activate()
+    # rpy2.robjects.numpy2ri.activate()
     r_random_seed = robjects.r['set.seed']
     r_random_seed(random_seed)
     rmclust = robjects.r['Mclust']
 
-    res = rmclust(rpy2.robjects.numpy2ri.numpy2rpy(adata.obsm[used_obsm]), num_cluster, modelNames)
+    res = rmclust(rpy2.robjects.numpy2ri.numpy2rpy(adata.obsm[key]), n_clusters)
     mclust_res = np.array(res[-2])
 
-    adata.obs['mclust'] = mclust_res
-    adata.obs['mclust'] = adata.obs['mclust'].astype('int')
-    adata.obs['mclust'] = adata.obs['mclust'].astype('category')
+    adata.obs[add_key] = mclust_res
+    adata.obs[add_key] = adata.obs[add_key].astype('int')
+    adata.obs[add_key] = adata.obs[add_key].astype('category')
     return adata
 
 
@@ -488,19 +530,8 @@ def clustering(adata, n_clusters=7, key='emb', add_key='SpatialGlue', method='mc
         adata.obsm[key + '_pca'] = pca(adata, use_reps=key,
                                        n_comps=n_comps if adata.obsm[key].shape[1] > n_comps else adata.obsm[key].shape[
                                            1])
-
-    if method == 'mclust':
-        adata = mclust_R(adata, used_obsm=key + '_pca' if method == 'mclust' else key, num_cluster=n_clusters)
-        adata.obs[add_key] = adata.obs['mclust']
-    elif method == 'leiden':
-        res = search_res(adata, n_clusters, use_rep=key + '_pca' if method == 'mclust' else key, method=method,
-                         start=start, end=end, increment=increment)
-        sc.tl.leiden(adata, random_state=0, resolution=res)
-        adata.obs[add_key] = adata.obs['leiden']
-    elif method == 'louvain':
-        res = search_res(adata, n_clusters, use_rep=key + '_pca' if method == 'mclust' else key, method=method, start=start, end=end,
-                         increment=increment)
-        adata.obs[add_key] = adata.obs['louvain']
+    adata = mclust_R(adata, used_obsm=key + '_pca' if use_pca else key, num_cluster=n_clusters)
+    adata.obs[add_key] = adata.obs['mclust']
 
 
 def search_res(adata, n_clusters, method='leiden', use_rep='emb', start=0.1, end=3.0, increment=0.01):
