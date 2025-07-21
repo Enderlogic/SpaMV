@@ -48,7 +48,7 @@ def construct_graph_by_coordinate(cell_position, neighborhood_depth=3, device='c
     edge_index = []
     for i in tqdm(range(cell_position.shape[0])):
         adj = np.where((cell_position[:, 0] - cell_position[i, 0]) ** 2 + (
-                    cell_position[:, 1] - cell_position[i, 1]) ** 2 < threshold)[0]
+                cell_position[:, 1] - cell_position[i, 1]) ** 2 < threshold)[0]
         for j in adj:
             edge_index.append([j, i])
     edge_index = torch.tensor(edge_index, device=device).T
@@ -94,8 +94,7 @@ def remove_box(ax):
 
 
 def plot_embedding_results(adatas, omics_names, topic_abundance, feature_topics, save=True, folder_path=None,
-                           file_name=None, show=False, full=False, corresponding_features=True, size=350,
-                           crop_coord=None, rb=True, img_alpha=.5):
+                           file_name=None, show=False, corresponding_features=True, size=350, crop_coord=None, rb=True):
     element_names = []
     for omics_name in omics_names:
         if omics_name == "Transcriptomics" or "H3K27" in omics_name:
@@ -139,11 +138,11 @@ def plot_embedding_results(adatas, omics_names, topic_abundance, feature_topics,
                 if 'spatial' not in adatas[j].uns:
                     embedding(adatas[j], color=mrf, vmax='p99', basis='spatial', size=size, cmap='coolwarm', show=False,
                               ax=axes[1 + j, i],
-                              title=mrf + '\nMost relevant ' + element_names[j] + '\nw.r.t. ' + topic_name)
+                              title=mrf + '\nHighest ranking ' + element_names[j] + '\nw.r.t. ' + topic_name)
                 else:
                     spatial(adatas[j], color=mrf, vmax='p99', cmap='coolwarm', show=False, ax=axes[1 + j, i],
-                            title=mrf + '\nMost relevant ' + element_names[j] + '\nw.r.t. ' + topic_name)
-                    # spatial_scatter(adatas[j], color=mrf, ax=axes[1 + j, i], cmap='coolwarm', crop_coord=crop_coord, title=mrf + '\nMost relevant ' + element_names[j] + '\nw.r.t. ' + topic_name, img_alpha=img_alpha)
+                            title=mrf + '\nHighest ranking ' + element_names[j] + '\nw.r.t. ' + topic_name)
+                    # spatial_scatter(adatas[j], color=mrf, ax=axes[1 + j, i], cmap='coolwarm', crop_coord=crop_coord, title=mrf + '\nMost relevant ' + element_names[j] + '\nw.r.t. ' + topic_name)
     for i in range(zs_dim):
         for j in range(n_omics + 1 if corresponding_features else 1):
             axes[j, i].set_xlabel('')  # Remove x-axis label
@@ -162,18 +161,18 @@ def plot_embedding_results(adatas, omics_names, topic_abundance, feature_topics,
                 # spatial(adatas[0], color=topic_name, vmax='p99', show=False, ax=axes[1 + n_omics + i * n_omics if corresponding_features else 1 + i, j])
                 spatial_scatter(adatas[0], color=topic_name,
                                 ax=axes[1 + n_omics + i * n_omics if corresponding_features else 1 + i, j],
-                                crop_coord=crop_coord, img_alpha=img_alpha)
+                                crop_coord=crop_coord)
             if corresponding_features:
                 mrf = feature_topics[omics_names[i]].nlargest(1, topic_name).index[0]
                 if 'spatial' not in adatas[i].uns:
                     embedding(adatas[i], color=mrf, vmax='p99', size=size, show=False, cmap='coolwarm', basis='spatial',
-                              title=mrf + '\nMost relevant ' + element_names[i] + '\nw.r.t. ' + topic_name,
+                              title=mrf + '\nHighest ranking ' + element_names[i] + '\nw.r.t. ' + topic_name,
                               ax=axes[1 + n_omics + i * n_omics + 1, j])
                 else:
                     spatial(adatas[i], color=mrf, vmax='p99', cmap='coolwarm', show=False,
                             ax=axes[1 + n_omics + i * n_omics + 1, j],
-                            title=mrf + '\nMost relevant ' + element_names[i] + '\nw.r.t. ' + topic_name)
-                    # spatial_scatter(adatas[i], color=mrf, cmap='coolwarm', ax=axes[1 + n_omics + i * n_omics + 1, j], crop_coord=crop_coord, title=mrf + '\nMost relevant ' + element_names[i] + '\nw.r.t. ' + topic_name, img_alpha=img_alpha)
+                            title=mrf + '\nHighest ranking ' + element_names[i] + '\nw.r.t. ' + topic_name)
+                    # spatial_scatter(adatas[i], color=mrf, cmap='coolwarm', ax=axes[1 + n_omics + i * n_omics + 1, j], crop_coord=crop_coord, title=mrf + '\nMost relevant ' + element_names[i] + '\nw.r.t. ' + topic_name)
     for i in range(n_omics):
         for j in range(zp_dims[i]):
             if corresponding_features:
@@ -199,14 +198,6 @@ def plot_embedding_results(adatas, omics_names, topic_abundance, feature_topics,
     if show:
         plt.show()
     plt.close()
-    if full:
-        for i in range(n_omics):
-            for topic in feature_topics[i].columns:
-                embedding(adatas[i], color=[topic] + feature_topics[i].nlargest(8, topic).index.tolist(),
-                          basis='spatial', size=size, show=False, ncols=3, vmax='p99')
-                fn = folder_path + omics_names[i] + '_' + topic + '.pdf'
-                plt.savefig(fn)
-                plt.close()
 
 
 def replace_legend(legend_texts):
@@ -346,17 +337,17 @@ def lsi(
         use_highly_variable = "highly_variable" in adata.var
     adata_use = adata[:, adata.var["highly_variable"]] if use_highly_variable else adata
     X = tfidf(adata_use.X)
-    # X = adata_use.X
     X_norm = sklearn.preprocessing.Normalizer(norm="l1").fit_transform(X)
     X_norm = np.log1p(X_norm * 1e4)
     X_lsi = sklearn.utils.extmath.randomized_svd(X_norm, n_components, random_state=random_state, **kwargs)[0]
     X_lsi -= X_lsi.mean(axis=1, keepdims=True)
     X_lsi /= X_lsi.std(axis=1, ddof=1, keepdims=True)
-    # adata.obsm["X_lsi"] = X_lsi
     adata.obsm[key_added] = X_lsi[:, 1:]
 
 
-def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool = True, hvg: bool = True, n_top_genes: int = 3000, normalize: bool = True, target_sum: int = 1e4, log1p: bool=True, scale: bool = False, ):
+def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool = True, hvg: bool = True,
+                  n_top_genes: int = 3000, normalize: bool = True, target_sum: int = 1e4, log1p: bool = True,
+                  scale: bool = False, ):
     '''
     # preprocess step for domain clustering
     
@@ -386,11 +377,9 @@ def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool =
         for i in range(len(datasets)):
             sc.pp.filter_genes(datasets[i], min_cells=round(datasets[i].n_obs / 100))
             sc.pp.filter_cells(datasets[i], min_genes=round(datasets[i].n_vars / 100))
-            # sc.pp.filter_genes(datasets[i], min_cells=10)
-            # sc.pp.filter_cells(datasets[i], min_genes=200)
             if any(substring.lower() in omics_names[i].lower() for substring in ['Transcriptomics', 'RNA', 'Gene']):
                 datasets[i].var['mt'] = np.logical_or(datasets[i].var_names.str.startswith('MT-'),
-                                                    datasets[i].var_names.str.startswith('mt-'))
+                                                      datasets[i].var_names.str.startswith('mt-'))
                 datasets[i].var['rb'] = datasets[i].var_names.str.startswith(('RP', 'Rp', 'rp'))
                 sc.pp.calculate_qc_metrics(datasets[i], qc_vars=['mt'], inplace=True)
                 mask_cell = datasets[i].obs['pct_counts_mt'] < 100
@@ -413,8 +402,6 @@ def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool =
                 sc.pp.log1p(datasets[i])
             if scale:
                 sc.pp.scale(datasets[i])
-            # datasets[i] = anndata.AnnData(pca(datasets[i], n_comps=n_comps), obs=datasets[i].obs, obsm=datasets[i].obsm, uns=datasets[i].uns)
-            # datasets[i].obsm['embedding'] = pca(datasets[i], n_comps=n_comps)
             sc.pp.pca(datasets[i], n_comps=n_comps, key_added='embedding')
         elif any(substring.lower() in omics_names[i].lower() for substring in ['Proteomics', 'ADT', 'Protein']):
             datasets[i] = clr_normalize_each_cell(datasets[i])
@@ -446,7 +433,7 @@ def log_mean_exp(value, dim=0, keepdim=False):
     return torch.logsumexp(value, dim, keepdim=keepdim) - math.log(value.size(dim))
 
 
-def mclust(adata, n_clusters, modelNames='EEE', key='emb', add_key='SpaMV_old', random_seed=2025):
+def mclust(adata, n_clusters, key='emb', add_key='SpaMV', random_seed=2025):
     """\
     Clustering using the mclust algorithm.
     The parameters are the same as those in the R package mclust.
@@ -460,7 +447,7 @@ def mclust(adata, n_clusters, modelNames='EEE', key='emb', add_key='SpaMV_old', 
     key: string
         The key of the input representation in adata.obsm. The default is 'emb'.
     add_key: string
-        The key of the output clustering result in adata.obs. The default is 'SpaMV_old'
+        The key of the output clustering result in adata.obs. The default is 'SpaMV'
     """
 
     np.random.seed(random_seed)
@@ -468,12 +455,11 @@ def mclust(adata, n_clusters, modelNames='EEE', key='emb', add_key='SpaMV_old', 
     robjects.r.library("mclust")
 
     import rpy2.robjects.numpy2ri
-    # rpy2.robjects.numpy2ri.activate()
     r_random_seed = robjects.r['set.seed']
     r_random_seed(random_seed)
     rmclust = robjects.r['Mclust']
 
-    res = rmclust(rpy2.robjects.numpy2ri.numpy2rpy(adata.obsm[key]), n_clusters)
+    res = rmclust(rpy2.robjects.numpy2ri.numpy2rpy(adata.obsm[key]), n_clusters, 'EEE')
     mclust_res = np.array(res[-2])
 
     adata.obs[add_key] = mclust_res
@@ -496,8 +482,7 @@ def pca(adata, use_reps=None, n_comps=10):
     return feat_pca
 
 
-def clustering(adata, n_clusters=7, key='emb', add_key='SpatialGlue', method='mclust', start=0.1, end=3.0,
-               increment=0.01, use_pca=False, n_comps=20):
+def clustering(adata, n_clusters=7, key='emb', add_key='SpaMV', use_pca=False, n_comps=20):
     """\
     Spatial clustering based the latent representation.
 
@@ -509,16 +494,8 @@ def clustering(adata, n_clusters=7, key='emb', add_key='SpatialGlue', method='mc
         The number of clusters. The default is 7.
     key : string, optional
         The key of the input representation in adata.obsm. The default is 'emb'.
-    method : string, optional
-        The tool for clustering. Supported tools include 'mclust', 'leiden', and 'louvain'. The default is 'mclust'.
-    start : float
-        The start value for searching. The default is 0.1. Only works if the clustering method is 'leiden' or 'louvain'.
-    end : float
-        The end value for searching. The default is 3.0. Only works if the clustering method is 'leiden' or 'louvain'.
-    increment : float
-        The step size to increase. The default is 0.01. Only works if the clustering method is 'leiden' or 'louvain'.
     use_pca : bool, optional
-        Whether use pca for dimension reduction. The default is false.
+        Whether use pca for dimension reduction. The default is True.
 
     Returns
     -------
@@ -530,56 +507,8 @@ def clustering(adata, n_clusters=7, key='emb', add_key='SpatialGlue', method='mc
         adata.obsm[key + '_pca'] = pca(adata, use_reps=key,
                                        n_comps=n_comps if adata.obsm[key].shape[1] > n_comps else adata.obsm[key].shape[
                                            1])
-    adata = mclust_R(adata, used_obsm=key + '_pca' if use_pca else key, num_cluster=n_clusters)
-    adata.obs[add_key] = adata.obs['mclust']
-
-
-def search_res(adata, n_clusters, method='leiden', use_rep='emb', start=0.1, end=3.0, increment=0.01):
-    '''\
-    Searching corresponding resolution according to given cluster number
-
-    Parameters
-    ----------
-    adata : anndata
-        AnnData object of spatial data.
-    n_clusters : int
-        Targetting number of clusters.
-    method : string
-        Tool for clustering. Supported tools include 'leiden' and 'louvain'. The default is 'leiden'.
-    use_rep : string
-        The indicated representation for clustering.
-    start : float
-        The start value for searching.
-    end : float
-        The end value for searching.
-    increment : float
-        The step size to increase.
-
-    Returns
-    -------
-    res : float
-        Resolution.
-
-    '''
-    print('Searching resolution...')
-    label = 0
-    sc.pp.neighbors(adata, n_neighbors=50, use_rep=use_rep)
-    for res in sorted(list(np.arange(start, end, increment)), reverse=True):
-        if method == 'leiden':
-            sc.tl.leiden(adata, random_state=0, resolution=res)
-            count_unique = len(pd.DataFrame(adata.obs['leiden']).leiden.unique())
-            print('resolution={}, cluster number={}'.format(res, count_unique))
-        elif method == 'louvain':
-            sc.tl.louvain(adata, random_state=0, resolution=res)
-            count_unique = len(pd.DataFrame(adata.obs['louvain']).louvain.unique())
-            print('resolution={}, cluster number={}'.format(res, count_unique))
-        if count_unique == n_clusters:
-            label = 1
-            break
-
-    assert label == 1, "Resolution is not found. Please try bigger range or smaller step!."
-
-    return res
+    adata = mclust(adata, n_clusters=n_clusters, key=key + '_pca' if use_pca else key, add_key=add_key)
+    return adata
 
 
 def cosine_similarity(A, B):
@@ -687,36 +616,6 @@ def compute_gene_topic_correlations(adata, z):
 
     return correlation_df, pvalue_df
 
-    """
-    Get top correlated genes for each topic.
-    
-    Parameters
-    ----------
-    correlation_df : pandas.DataFrame
-        DataFrame containing correlation coefficients
-    n_genes : int
-        Number of top genes to return per topic
-    absolute : bool
-        If True, rank by absolute correlation values
-        If False, rank by raw correlation values
-    
-    Returns
-    -------
-    dict
-        Dictionary mapping topic names to top correlated genes
-    """
-    top_genes = {}
-    for topic in correlation_df.columns:
-        if absolute:
-            # Get absolute correlation values
-            abs_corr = correlation_df[topic].abs()
-            # Sort and get top n genes
-            top_genes[topic] = correlation_df[topic][abs_corr.nlargest(n_genes).index]
-        else:
-            # Sort by raw correlation values
-            top_genes[topic] = correlation_df[topic].nlargest(n_genes)
-    return top_genes
-
 
 def plot_top_positive_correlations_boxplot(adata, z, omics_name, n_top=None, figsize=(12, 6)):
     """
@@ -765,7 +664,6 @@ def plot_top_positive_correlations_boxplot(adata, z, omics_name, n_top=None, fig
     )
 
     # Customize the plot
-    # plt.title(f'Distribution of Top {n_top} Correlations with {omics_name} per Topic')
     plt.xlabel('')
     plt.ylabel('Pearson Correlation Coefficients')
 

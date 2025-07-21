@@ -1,18 +1,13 @@
 """Main module."""
-import re
 from typing import List
 import rbo
 import numpy as np
 import pyro
 import scanpy
 import scanpy.plotting
-from sklearn.metrics import adjusted_rand_score
 import torch
 import torch.nn.functional as F
-from torch.distributions import Normal
-# import wandb
 from anndata import AnnData
-from matplotlib import pyplot as plt
 from pandas import DataFrame
 from pyro.infer import TraceMeanField_ELBO
 from pyro.poutine import scale, trace
@@ -20,26 +15,22 @@ from pyro import poutine
 from pyro.infer.util import is_validation_enabled
 from pyro.poutine.util import prune_subsample_sites
 from pyro.util import check_model_guide_match, check_site_shape
-from scanpy.plotting import embedding
 from scipy.sparse import issparse
 from sklearn.cluster import KMeans
-from sklearn.metrics.pairwise import cosine_similarity
-from torch.distributions.kl import kl_divergence
 from torch.nn.functional import mse_loss
 from torch.nn.utils import clip_grad_norm_
 from torch.optim import Adam
 from tqdm import tqdm
 from torch_geometric import seed_everything
 import os
-from .metrics import compute_moranI, compute_jaccard, compute_supervised_scores, compute_topic_coherence, \
-    compute_topic_diversity
 from .model import spamv
 from .layers import Measurement
-from .utils import adjacent_matrix_preprocessing, get_init_bg, log_mean_exp, clustering
+from .utils import adjacent_matrix_preprocessing, get_init_bg, log_mean_exp
 
 from torch_geometric.data import Data
 from torch_geometric.loader import NeighborLoader
-
+import warnings
+warnings.filterwarnings("ignore")
 
 def set_seed(seed):
     """Set seed for all random number generators and ensure deterministic operations."""
@@ -137,10 +128,9 @@ class SpaMV:
                  weights: List[float] = None, betas: List[float] = None, recon_types: List[str] = None,
                  omics_names: List[str] = None, device: torch.device = None, hidden_dim: int = None,
                  batch_size: int = None, heads: int = 1, neighborhood_depth: int = 2, neighborhood_embedding: int = 10,
-                 random_seed: int = 0, max_epochs: int = 400, max_epochs2: int = 400, dropout_prob: float = 0,
-                 min_kl: float = 1, max_kl: float = 1, learning_rate: float = None, folder_path: str = None,
-                 early_stopping: bool = True, patience: int = 200, n_cluster: int = 10, test_mode: bool = False,
-                 result: DataFrame = None, threshold_noise: int = .3, threshold_background: int = 1):
+                 random_seed: int = 0, max_epochs_stage1: int = 400, max_epochs_stage2: int = 400,
+                 learning_rate: float = None, early_stopping: bool = True, patience: int = 200,
+                 threshold_noise: int = .3, threshold_background: int = 1):
         pyro.clear_param_store()
         set_seed(random_seed)
 
@@ -174,13 +164,12 @@ class SpaMV:
         else:
             self.betas = betas
         if recon_types is None:
-            recon_types = ["nb" for _ in range(self.n_omics)] if interpretable else ["gauss", "gauss"]
+            self.recon_types = ["nb" if interpretable else "gauss" for _ in range(self.n_omics)]
         else:
             for recon_type in recon_types:
                 if recon_type not in ['zinb', 'nb', 'gauss']:
-                    raise ValueError("recon_type must be 'nb' or 'zinb' or 'gauss'")
-
-        self.recon_types = recon_types
+                    raise ValueError("recon_type must be one of ['nb', 'zinb', 'gauss']")
+            self.recon_types = recon_types
         if hidden_dim is None:
             self.hidden_dim = 128 if interpretable else 256
         elif hidden_dim <= 0:
@@ -200,24 +189,19 @@ class SpaMV:
         self.n_obs = adatas[0].shape[0]
         if batch_size is None:
             self.batch_size = 10000 if self.n_obs > 10000 else self.n_obs
+        elif batch_size <= 0:
+            raise ValueError("batch_size must be a positive integer")
         else:
             self.batch_size = batch_size
         print(self.device)
         self.heads = heads
         self.neighborhood_depth = neighborhood_depth
         self.neighborhood_embedding = neighborhood_embedding
-
         self.interpretable = interpretable
-        self.max_epochs = max_epochs
-        self.max_epochs2 = max_epochs2
-        self.min_kl = min_kl
-        self.max_kl = max_kl
-        self.folder_path = folder_path
+        self.max_epochs_stage1 = max_epochs_stage1
+        self.max_epochs_stage2 = max_epochs_stage2
         self.early_stopping = early_stopping
         self.patience = patience
-        self.n_cluster = n_cluster
-        self.test_mode = test_mode
-        self.result = result
         self.pretrain_epoch = 200 if interpretable else 10
         self.epoch = 0
         self.epoch2 = 0
@@ -238,17 +222,15 @@ class SpaMV:
             np.ascontiguousarray(adatas[i].X.toarray() if issparse(adatas[i].X) else adatas[i].X), device=self.device,
             dtype=torch.float) for i in range(self.n_omics)]) if interpretable else None
         self.model = spamv(self.data_dims, self.zs_dim, self.zp_dims, self.init_bg_means, self.weights, self.hidden_dim,
-                           self.recon_types, heads, interpretable, self.device, self.omics_names, dropout_prob)
+                           self.recon_types, heads, interpretable, self.device, self.omics_names)
 
-    def train(self, dataname=None, size=200):
-        if dataname is None:
-            dataname = ''
+    def train(self):
 
         self.model = self.model.to(self.device)
         if self.early_stopping:
             self.early_stopper = EarlyStopper(patience=self.patience)
 
-        pbar = tqdm(range(self.max_epochs), position=0, leave=True)
+        pbar = tqdm(range(self.max_epochs_stage1), position=0, leave=True)
 
         loss_fn = lambda model, guide: TraceMeanField_ELBO(num_particles=1).differentiable_loss(model, guide, [
             self.loader[i](self.root_node_indices[0]) for i in range(self.n_omics)])
@@ -282,7 +264,6 @@ class SpaMV:
                         measurement_loss.backward()
                         clip_grad_norm_(self.measurement.parameters(), 5)
                         optimizer_measurement.step()
-                    # wandb.log({'Measurement Loss': measurement_loss.item()}, step=self.epoch)
                 # train the model
                 self.model.train()
                 optimizer.zero_grad()
@@ -300,7 +281,7 @@ class SpaMV:
             params_zs = set(site["value"].unconstrained() for site in param_capture.trace.nodes.values() if
                             'zp' not in site['name'])
             optimizer_zs = Adam(params_zs, lr=self.learning_rate, betas=(.9, .999), weight_decay=0, eps=1e-8)
-            pbar = tqdm(range(self.epoch, self.max_epochs2 + self.epoch), position=0, leave=True)
+            pbar = tqdm(range(self.epoch, self.max_epochs_stage2 + self.epoch), position=0, leave=True)
             self.early_stopper.min_training_loss = np.inf
             zps = self.model.get_private_latent([self.loader[i](range(self.n_obs)) for i in range(self.n_omics)], False)
 
@@ -325,13 +306,6 @@ class SpaMV:
                         break
             zs = self.model.get_shared_embedding([self.loader[i](range(self.n_obs)) for i in range(self.n_omics)])
             self.meaningful_dimensions['zs'] = self.get_meaningful_dimensions(zs)
-        return self.result
-
-    def _kl_weight(self):
-        kl = self.min_kl + self.epoch / self.max_epochs * (self.max_kl - self.min_kl)
-        if kl > self.max_kl:
-            kl = self.max_kl
-        return kl
 
     def get_meaningful_dimensions(self, z):
         # prune noisy dimensions
@@ -347,22 +321,8 @@ class SpaMV:
         # prune background dimensions
         z_exp_std = torch.exp(z[:, z_pruned]).std(0)
         z_pruned = z_pruned[z_exp_std.detach().cpu().numpy() > self.threshold_background]
-        # print(z_exp_std)
-        # self.adatas[0].obsm['z'] = z[:, z_pruned].exp().detach().cpu().numpy()
-        # morans_i = scanpy.metrics.morans_i(self.adatas[0], obsm='z')
-        # print(morans_i)
-        # if z_exp_std.min() < self.threshold_background and len(z_pruned) > 1:
-        #     kmeans = KMeans(n_clusters=2)
-        #     kmeans.fit(F.softmax(z_exp_std).detach().cpu().numpy().reshape(-1, 1))
-        #     z_pruned = z_pruned[np.where(kmeans.labels_ == np.argmax(kmeans.cluster_centers_))[0]]
 
         return z_pruned
-
-    def _kl_weight2(self):
-        kl = self.min_kl + (self.epoch2 - self.epoch) / self.max_epochs * (self.max_kl - self.min_kl)
-        if kl > self.max_kl:
-            kl = self.max_kl
-        return kl
 
     def HSIC(self, x, y, s_x=1, s_y=1):
         m, _ = x.shape  # batch size
@@ -373,7 +333,6 @@ class SpaMV:
         return HSIC
 
     def get_elbo(self, datas):
-        annealing_factor = self._kl_weight()
         elbo_particle = 0
         batch_size = datas[0].input_id.shape[0]
         model_trace, guide_trace = get_importance_trace('flat', torch.inf, scale(self.model.model, 1 / batch_size),
@@ -382,49 +341,32 @@ class SpaMV:
             if model_site["type"] == "sample":
                 if model_site["is_observed"]:
                     elbo_particle = elbo_particle + model_site["log_prob_sum"]
-                    # wandb.log({name: -model_site["log_prob_sum"].item()}, step=self.epoch)
                 else:
                     guide_site = guide_trace.nodes[name]
                     entropy_term = (log_mean_exp(torch.stack(
                         [guide_trace.nodes["zs_" + self.omics_names[i]]["fn"].log_prob(guide_site["value"]) for i in
                          range(len(self.data_dims))])) * guide_site['scale']).sum() if "zs" in name else guide_site[
                         'log_prob_sum']
-                    elbo_particle += (model_site["log_prob_sum"] - entropy_term) * annealing_factor
-                    # wandb.log({name: (-model_site["log_prob_sum"] + entropy_term.sum()).item()}, step=self.epoch)
+                    elbo_particle += (model_site["log_prob_sum"] - entropy_term)
         if self.epoch >= self.pretrain_epoch:
             self.measurement.eval()
             output = self.measurement(self.model.get_private_latent(datas, True))
-            # output = self.measurement(self.model.get_private_embedding(self.x, self.edge_index))
             for i in range(self.n_omics):
                 for j in range(self.n_omics):
                     if i != j:
                         name = "from_" + self.omics_names[i] + "_to_" + self.omics_names[j]
                         if self.interpretable:
-                            # loss_measurement = -((self.x[j].sum(1, keepdim=True) * output[name]).var(0)).mean() * model_trace.nodes[
-                            #                        'recon_' + self.omics_names[i] + '_from_' + self.omics_names[i]][
-                            #                        'log_prob_sum'].detach() * self.betas[i] / 10
-                            # loss_measurement = output[name].std(0).sum() * self.data_dims[i] / min(self.data_dims) * \
-                            #                    self.weights[i] * self.betas[i]
                             loss_measurement = output[name].std(0).sum() * self.data_dims[i] / 100 * self.weights[i] * \
                                                self.betas[i]
-                            # loss_measurement = output[name].std(0).sum() * self.betas[i]
-                            # loss_measurement = -output[name].std(0).sum() * model_trace.nodes['recon_' + self.omics_names[i] + '_from_' + self.omics_names[i]]['log_prob_sum'].detach() * self.betas[i] / 10
-                            # loss_measurement = ((self.x[j].sum(1, keepdim=True) * output[name]).std(0) * self.x[j].std(0) / self.x[j].std(0).sum()).sum() * self.betas[i]
                         else:
-                            # loss_measurement = -output[name].var(0).mean() * model_trace.nodes[
-                            #                        'recon_' + self.omics_names[i] + '_from_' + self.omics_names[i]][
-                            #                        'log_prob_sum'].detach() * self.betas[i] / 10
                             data_std = datas[j].x[:datas[0].input_id.shape[0]].std(0)
                             loss_measurement = (output[name].std(
                                 0) * data_std / data_std.sum()).sum() * data_std.mean() * self.weights[i] * self.betas[
                                                    i]
                         elbo_particle -= loss_measurement
-        #                 wandb.log({name + '_std': loss_measurement}, step=self.epoch)
-        # wandb.log({"Loss": -elbo_particle.item()}, step=self.epoch)
         return -elbo_particle
 
     def get_elbo_shared(self, datas):
-        annealing_factor = self._kl_weight2()
         elbo_particle = 0
         batch_size = datas[0].input_id.shape[0]
         model_trace, guide_trace = get_importance_trace('flat', torch.inf, scale(self.model.model, 1 / batch_size),
@@ -433,46 +375,25 @@ class SpaMV:
             if model_site["type"] == "sample":
                 if model_site["is_observed"]:
                     elbo_particle = elbo_particle + model_site["log_prob_sum"]
-                    # wandb.log({name: -model_site["log_prob_sum"].item()}, step=self.epoch2)
                 elif 'zs' in name:
                     guide_site = guide_trace.nodes[name]
                     entropy_term = (log_mean_exp(torch.stack(
                         [guide_trace.nodes["zs_" + self.omics_names[i]]["fn"].log_prob(guide_site["value"]) for i in
                          range(len(self.data_dims))])) * guide_site['scale']).sum()
-                    elbo_particle += (model_site["log_prob_sum"] - entropy_term) * annealing_factor
-                    # wandb.log({name: (-model_site["log_prob_sum"] + entropy_term.sum()).item()}, step=self.epoch2)
+                    elbo_particle += (model_site["log_prob_sum"] - entropy_term)
                     omics_name = name.split("_")[1]
                     for on in self.omics_names:
                         if on != omics_name:
                             # loss_hsic = self.HSIC(guide_site['fn'].mean,
                             #                       guide_trace.nodes["zp_" + on]["fn"].mean.detach()[:,
-                            #                       self.meaningful_dimensions['zp_' + on]]) * self.n_obs * np.sqrt(
-                            #     max(self.data_dims)) * self.weights[self.omics_names.index(on)]
-                            # loss_hsic = self.HSIC(guide_site['fn'].mean,
-                            #                       guide_trace.nodes["zp_" + on]["fn"].mean.detach()[:,
-                            #                       self.meaningful_dimensions['zp_' + on]]) * self.n_obs * \
-                            #             np.sqrt(self.data_dims[self.omics_names.index(on)])
+                            #                       self.meaningful_dimensions['zp_' + on]]) * batch_size * np.sqrt(
+                            #     self.data_dims[self.omics_names.index(on)]) * self.betas[self.omics_names.index(on)]
                             loss_hsic = self.HSIC(guide_site['fn'].mean,
                                                   guide_trace.nodes["zp_" + on]["fn"].mean.detach()[:,
                                                   self.meaningful_dimensions['zp_' + on]]) * batch_size * np.sqrt(
-                                self.data_dims[self.omics_names.index(on)]) * self.betas[self.omics_names.index(on)]
-                            # loss_hsic = self.HSIC(guide_site['value'],
-                            #                       guide_trace.nodes["zp_" + on]["value"].detach()[:,
-                            #                       self.meaningful_dimensions['zp_' + on]]) * self.n_obs * self.data_dims[self.omics_names.index(on)]
-                            # wandb.log({"HSIC between zs " + omics_name + " and zp " + on: loss_hsic.item()},
-                            #           step=self.epoch2)
+                                self.data_dims[self.omics_names.index(on)])
                             elbo_particle -= loss_hsic
 
-        # names = list(model_trace.nodes.keys())
-        # for i in range(len(names)):
-        #     for j in range(i + 1, len(names)):
-        #         if names[i].startswith('zs') and names[j].startswith('zs'):
-        #             kl_zs = kl_divergence(guide_trace.nodes[names[i]]['fn'].base_dist,
-        #                                   guide_trace.nodes[names[j]]['fn'].base_dist).sum() * \
-        #                     guide_trace.nodes[names[i]]['scale'] * 10
-        #             wandb.log({"KL_" + names[i] + "_" + names[j]: kl_zs.item()}, step=self.epoch2)
-        #             elbo_particle -= kl_zs
-        # wandb.log({"Loss": -elbo_particle.item()}, step=self.epoch2)
         return -elbo_particle
 
     def get_measurement_loss(self, datas):
@@ -480,32 +401,17 @@ class SpaMV:
         zps = [z.detach() if self.interpretable else z.detach() for z in
                self.model.get_private_latent(datas, False)]
         output = self.measurement(zps)
-        # output = self.measurement(self.model.get_private_latent(self.x, self.edge_index, False))
         loss = 0
         for i in range(self.n_omics):
             for j in range(self.n_omics):
                 if i != j:
                     name = "from_" + self.omics_names[i] + "_to_" + self.omics_names[j]
                     if self.interpretable:
-                        # output[name] = output[name] / output[name].sum(1, keepdim=True)
-                        # loss += mse_loss(output[name], self.x[j].div(self.x[j].sum(1, keepdim=True))) * \
-                        # output[name].shape[0] * output[name].shape[1]
-                        # output[name] = self.x[j].sum(1, keepdim=True) * output[name]
                         output[name] = datas[j].x[:batch_size].sum(1, keepdim=True) * output[name]
                         loss += mse_loss(output[name], datas[j].x[:batch_size]) * batch_size
                     else:
-                        # loss = -Normal(output[name], getattr(self.model, 'disp_' + self.omics_names[j]).detach().exp()).log_prob(self.x[j]).sum() / self.n_obs
                         loss += mse_loss(output[name], datas[j].x[:batch_size]) * np.sqrt(batch_size)
         return loss
-
-    def save(self, path):
-        self.model.save(path)
-
-    def load(self, path, map_location=torch.device('cpu')):
-        self.model.load(path, map_location=map_location)
-
-    def get_separate_embedding(self):
-        return self.model.get_separate_embedding(self.x, self.edge_index)
 
     def get_embedding(self):
         '''
@@ -518,8 +424,6 @@ class SpaMV:
         will be the shared embeddings, and the following 5 columns will be the private embeddings for data1, and the
         last 5 columns will be the private embeddings for data2.
         '''
-        # [self.loader[i]() for i in range(self.n_omics)]
-        # list(range(start, end))
         z_mean = []
         for batch_idx in range(len(self.root_node_indices)):
             batch_data = [self.loader[i](self.root_node_indices[batch_idx]) for i in range(self.n_omics)]
@@ -534,7 +438,6 @@ class SpaMV:
             spot_topic.set_index(self.adatas[0].obs_names, inplace=True)
             return spot_topic
         else:
-            # return z_mean.detach().cpu().numpy()
             return F.normalize(z_mean).detach().cpu().numpy()
 
     def get_embedding_and_feature_by_topic(self, merge=True, threshold=.4):
@@ -602,23 +505,17 @@ class SpaMV:
                     oj = 'Shared' if 'Shared' in topic_j else ' '.join(topic_j.split()[:-3])
                     if spot_topic.columns.get_loc(topic_j) > spot_topic.columns.get_loc(topic_i) and oi == oj:
                         if oi == 'Shared':
-                            # sim = min([cosine_similarity(ft[topic_i].values.reshape(1, -1), ft[topic_j].values.reshape(1, -1)) for ft in feature_topic])
                             sim = min([rbo.RankingSimilarity(
                                 feature_topic[self.omics_names[i]].nlargest(topks[i], topic_i).index.tolist(),
                                 feature_topic[self.omics_names[i]].nlargest(topks[i], topic_j).index.tolist()).rbo() for
-                                       i in
-                                       range(self.n_omics)])
+                                       i in range(self.n_omics)])
                         else:
-                            # sim = cosine_similarity(feature_topic[self.omics_names.index(on)][topic_i].values.reshape(1, -1), feature_topic[self.omics_names.index(on)][topic_j].values.reshape(1, -1))
                             sim = rbo.RankingSimilarity(
                                 feature_topic[oi].nlargest(topks[self.omics_names.index(oi)],
                                                            topic_i).index.tolist(),
                                 feature_topic[oj].nlargest(topks[self.omics_names.index(oj)],
                                                            topic_j).index.tolist()).rbo()
                         if sim > threshold:
-                            # li = feature_topic[0].nlargest(50, topic_i).index.tolist()
-                            # lj = feature_topic[0].nlargest(50, topic_j).index.tolist()
-                            # r = rbo.RankingSimilarity(li, lj).rbo()
                             print('merge', topic_i, 'and', topic_j)
                             spot_topic.loc[:, topic_i] = (spot_topic[topic_i] + spot_topic[topic_j]) / 2
                             spot_topic = spot_topic.drop(columns=topic_j)

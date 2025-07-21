@@ -8,16 +8,12 @@ class MLPEncoder(nn.Module):
         super(MLPEncoder, self).__init__()
         self.out_dim = out_dim
         self.conv1 = GATv2Conv(in_dim, hidden_dim, heads=heads)
-        # self.conv1 = GATv2Conv(in_dim, hidden_dim, heads=heads, dropout=dropout_prob)
         self.batch_norm1 = BatchNorm(hidden_dim * heads)
-        # self.dropout = nn.Dropout(dropout_prob)
-        # self.conv2 = GATv2Conv(hidden_dim * heads, out_dim * 2, heads=heads, dropout=dropout_prob, concat=False)
         self.conv2 = GATv2Conv(hidden_dim * heads, out_dim * 2, heads=heads, concat=False)
         self.batch_norm2 = BatchNorm(out_dim, affine=False)
 
     def forward(self, x, edge_index):
         x = F.relu(self.batch_norm1(self.conv1(x, edge_index)))
-        # x = self.dropout(x)
         output = self.conv2(x, edge_index)
         return torch.cat([self.batch_norm2(output[:, :self.out_dim]), F.softplus(output[:, self.out_dim:])], dim=1)
 
@@ -67,7 +63,6 @@ class Measurement(nn.Module):
                 if i != j:
                     name = "from_" + omics_names[i] + "_to_" + omics_names[j]
                     if interpretable:
-                        # self.w[name] = nn.Parameter(torch.randn(zp_dims[i], data_dims[j]))
                         self.fc1[name] = nn.Linear(zp_dims[i], hidden_dim)
                         self.fc2[name] = nn.Linear(hidden_dim, data_dims[j])
                     else:
@@ -81,14 +76,11 @@ class Measurement(nn.Module):
                 if i != j:
                     name = "from_" + self.omics_names[i] + "_to_" + self.omics_names[j]
                     if self.interpretable:
-                        # output[name] = zps[i] @ F.softplus(self.w[name])
-                        # output[name] = F.softmax(zps[i], 1) @ F.softmax(self.w[name], 1)
                         hidden = F.relu(self.fc1[name](zps[i]))
                         if self.recon_types[j] == 'gauss':
                             output[name] = self.fc2[name](hidden)
                         else:
                             output[name] = F.softmax(self.fc2[name](hidden), 1)
-                            # output[name] = self.fc2[name](hidden)
                     else:
                         hidden = F.relu(self.fc1[name](zps[i]))
                         if self.recon_types[j] == 'gauss':

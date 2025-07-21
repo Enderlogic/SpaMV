@@ -92,7 +92,7 @@ wandb.init(project=data, config=args,
 model = SpaMV(adata_combined, zs_dim=args.zs_dim, zp_dims=[args.zp_dim_omics1, args.zp_dim_omics2], weights=weights,
               beta=[args.beta_0, args.beta_1], interpretable=args.interpretable, hidden_dim=args.hidden_dim,
               heads=args.heads, n_neighbors=args.n_neighbors, random_seed=args.seed, recon_types=recon_types,
-              omics_names=omics_names, min_epochs=50, max_epochs=args.epochs, min_kl=args.kl, max_kl=args.kl,
+              omics_names=omics_names, min_epochs=50, max_epochs_stage1=args.epochs, min_kl=args.kl, max_kl=args.kl,
               learning_rate=args.learning_rate, folder_path=folder_path, n_cluster=n_cluster, test_mode=True,
               detach=args.detach, distinguish=args.distinguish, device=device)
 model.train()

@@ -20,7 +20,7 @@ scale_init = math.log(0.01)
 class spamv(PyroModule):
     def __init__(self, data_dims: List[int], zs_dim: int, zp_dims: List[int], init_bg_means: List[Tensor],
                  weights: List[float], hidden_size: int, recon_types: List[str], heads: int, interpretable: bool,
-                 device: torch.device, omics_names: List[str], dropout_prob: float = .2):
+                 device: torch.device, omics_names: List[str]):
         super().__init__()
 
         self.data_dims = data_dims
@@ -41,8 +41,6 @@ class spamv(PyroModule):
 
         for i in range(len(data_dims)):
             if interpretable:
-                # self.set_attr(["disp"], PyroParam(self._zeros_init(data_dims[i])),
-                #               PyroParam(self._ones_init(data_dims[i])))
                 setattr(self, "disp_" + omics_names[i], PyroParam(self._zeros_init(data_dims[i])))
                 if recon_types[i] == "zinb":
                     setattr(self, "decoder_zi_logits_" + omics_names[i],
@@ -54,9 +52,6 @@ class spamv(PyroModule):
                         setattr(self, "zp_encoder_" + omics_names[i],
                                 MLPEncoder(data_dims[i], hidden_size, zp_dims[i], heads).to(device))
                 self.set_attr(["c"], i, (1))
-                # setattr(self, 'c_mean_' + self.omics_names[i], PyroParam(self._ones_init(1)))
-                # setattr(self, 'c_std_' + self.omics_names[i],
-                #         PyroParam(self._ones_init(1), constraint=constraints.positive))
                 self.set_attr(["delta", "bg"], i, data_dims[i])
                 self.set_attr(["tau"], i, (self.latent_dims[i], 1))
                 self.set_attr(["lambda", "beta"], i, (self.latent_dims[i], data_dims[i]))
@@ -64,13 +59,13 @@ class spamv(PyroModule):
                 setattr(self, "disp_" + omics_names[i], PyroParam(self._zeros_init(data_dims[i])))
                 setattr(self, "zs_encoder_" + omics_names[i],
                         GAT(in_channels=data_dims[i], hidden_channels=hidden_size, num_layers=1,
-                            out_channels=zs_dim * 2, heads=heads, dropout=dropout_prob, v2=True, concat=False))
+                            out_channels=zs_dim * 2, heads=heads, v2=True, concat=False))
                 setattr(self, "decoder_" + omics_names[i],
                         Decoder(self.latent_dims[i], hidden_size, data_dims[i], recon_types[i]).to(device))
                 if zp_dims[i] > 0:
                     setattr(self, "zp_encoder_" + omics_names[i],
                             GAT(in_channels=data_dims[i], hidden_channels=hidden_size, num_layers=1,
-                                out_channels=zp_dims[i] * 2, heads=heads, dropout=dropout_prob, v2=True, concat=False))
+                                out_channels=zp_dims[i] * 2, heads=heads, v2=True, concat=False))
                     setattr(self, "zp_aux_std_" + omics_names[i],
                             PyroParam(self._ones_init(zp_dims[i]), constraint=constraints.positive))
         self.omics_plate = [self.get_plate("omics_" + omics_names[i]) for i in range(len(data_dims))]
@@ -167,9 +162,6 @@ class spamv(PyroModule):
                     # cross reconstruction (using shared embedding from data i to reconstruct data j)
                     z = torch.cat((zss[i], zp_auxs[j]), dim=1) if self.zp_dims[j] > 0 else zss[i]
                 if self.interpretable:
-                    # x_tilde = z @ F.softmax(betas[j], dim=1)
-                    # x_tilde = x_tilde.clamp(min=1e-10)
-                    # x_tilde = lss[j] * x_tilde / x_tilde.sum(1, keepdim=True)
                     x_tilde = lss[j] * F.softmax(z, 1) @ F.softmax(betas[j], 1)
                     if self.recon_types[j] == 'zinb':
                         zi_logits = getattr(self, "decoder_zi_logits_" + self.omics_names[j])(z)
@@ -273,18 +265,6 @@ class spamv(PyroModule):
         for i, data in zip(range(self.n_omics), datas):
             zs += getattr(self, "zs_encoder_" + self.omics_names[i])(data.x, data.edge_index)[:batch_size].split(self.zs_dim, 1)[0] / self.n_omics
         return zs
-
-    def get_separate_embedding(self, data, edge_index):
-        self.eval()
-        output = {}
-        with torch.no_grad():
-            for i, d, e in zip(range(len(data)), data, edge_index):
-                zs_mean = getattr(self, "zs_encoder_" + self.omics_names[i])(d, e).split(self.zs_dim, 1)[0]
-                output['zs_' + self.omics_names[i]] = zs_mean
-                if self.zp_dims[i] > 0:
-                    zp_mean = getattr(self, "zp_encoder_" + self.omics_names[i])(d, e).split(self.zp_dims[i], 1)[0]
-                    output['zp_' + self.omics_names[i]] = zp_mean
-        return output
 
     @torch.inference_mode()
     def get_feature_by_topic(self):
