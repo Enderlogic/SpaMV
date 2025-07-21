@@ -28,6 +28,7 @@ from typing import List, Optional
 from anndata import AnnData
 from tqdm import tqdm
 
+
 def construct_graph_by_coordinate(cell_position, neighborhood_depth=3, device='cpu'):
     '''
     Constructing spatial neighbor graph according to spatial coordinates.
@@ -46,7 +47,8 @@ def construct_graph_by_coordinate(cell_position, neighborhood_depth=3, device='c
     threshold = dist_sort[neighborhood_depth]
     edge_index = []
     for i in tqdm(range(cell_position.shape[0])):
-        adj = np.where((cell_position[:, 0] - cell_position[i, 0]) ** 2 + (cell_position[:, 1] - cell_position[i, 1]) ** 2 < threshold)[0]
+        adj = np.where((cell_position[:, 0] - cell_position[i, 0]) ** 2 + (
+                cell_position[:, 1] - cell_position[i, 1]) ** 2 < threshold)[0]
         for j in adj:
             edge_index.append([j, i])
     edge_index = torch.tensor(edge_index, device=device).T
@@ -61,7 +63,7 @@ def construct_graph_by_feature(adata, n_neighbors=20, mode="connectivity", metri
         feature_graph = kneighbors_graph(adata.obsm['X_pca'], n_neighbors, mode=mode, metric=metric)
     else:
         feature_graph = kneighbors_graph(adata.X.toarray() if issparse(adata.X) else adata.X, n_neighbors, mode=mode,
-                             metric=metric)
+                                         metric=metric)
     return from_scipy_sparse_matrix(feature_graph)[0].to(device=device)
 
 
@@ -89,18 +91,20 @@ def get_init_bg(x):
 def remove_box(ax):
     for spine in ax.spines.values():
         spine.set_visible(False)
-        
+
+
 def plot_embedding_results(adatas, omics_names, topic_abundance, feature_topics, save=True, folder_path=None,
-                           file_name=None, show=False, full=False, corresponding_features=True, size=350, crop_coord=None, rb=True, img_alpha=.5):
+                           file_name=None, show=False, corresponding_features=True, size=350, crop_coord=None, rb=True,
+                           img_alpha=.5):
     element_names = []
     for omics_name in omics_names:
-        if omics_name == "Transcriptomics" or "H3K27" in omics_name:
+        if omics_name in ["Transcriptomics", "Transcriptome"] or "H3K27" in omics_name:
             element_names.append("Gene")
-        elif omics_name == "Proteomics":
+        elif omics_name in ["Proteomics", "Proteome"]:
             element_names.append("Protein")
-        elif omics_name == "Epigenomics":
+        elif omics_name in ["Epigenomics", "Epigenome"]:
             element_names.append("Region of open chromatin")
-        elif omics_name == "Metabolomics":
+        elif omics_name in ["Metabolomics", "Metabolome", "Metabonomics", "Metabonome"]:
             element_names.append("Metabolite")
     zs_dim = len([item for item in topic_abundance.columns if 'Shared' in item])
     n_omics = len(adatas)
@@ -132,11 +136,11 @@ def plot_embedding_results(adatas, omics_names, topic_abundance, feature_topics,
                 mrf = feature_topics[omics_names[j]].nlargest(1, topic_name).index[0]
                 if 'spatial' not in adatas[j].uns:
                     embedding(adatas[j], color=mrf, vmax='p99', basis='spatial', size=size, cmap='coolwarm', show=False,
-                            ax=axes[1 + j, i],
-                            title=mrf + '\nMost relevant ' + element_names[j] + '\nw.r.t. ' + topic_name)
+                              ax=axes[1 + j, i],
+                              title=mrf + '\nHighest ranking ' + element_names[j] + '\nw.r.t. ' + topic_name)
                 else:
-                    spatial(adatas[j], color=mrf, vmax='p99', cmap='coolwarm', show=False, ax=axes[1 + j, i], title=mrf + '\nMost relevant ' + element_names[j] + '\nw.r.t. ' + topic_name)
-                    # spatial_scatter(adatas[j], color=mrf, ax=axes[1 + j, i], cmap='coolwarm', crop_coord=crop_coord, title=mrf + '\nMost relevant ' + element_names[j] + '\nw.r.t. ' + topic_name, img_alpha=img_alpha)
+                    spatial(adatas[j], color=mrf, vmax='p99', cmap='coolwarm', show=False, ax=axes[1 + j, i],
+                            title=mrf + '\nMost relevant ' + element_names[j] + '\nw.r.t. ' + topic_name)
     for i in range(zs_dim):
         for j in range(n_omics + 1 if corresponding_features else 1):
             axes[j, i].set_xlabel('')  # Remove x-axis label
@@ -148,21 +152,23 @@ def plot_embedding_results(adatas, omics_names, topic_abundance, feature_topics,
     for i in range(n_omics):
         for j in range(zp_dims[i]):
             topic_name = feature_topics[omics_names[i]].columns[zs_dim + j]
-            if 'spatial' not in adatas[0].uns: 
+            if 'spatial' not in adatas[0].uns:
                 embedding(adatas[0], color=topic_name, vmax='p99', size=size, show=False, basis='spatial',
-                        ax=axes[1 + n_omics + i * n_omics if corresponding_features else 1 + i, j])
+                          ax=axes[1 + n_omics + i * n_omics if corresponding_features else 1 + i, j])
             else:
-                # spatial(adatas[0], color=topic_name, vmax='p99', show=False, ax=axes[1 + n_omics + i * n_omics if corresponding_features else 1 + i, j])
-                spatial_scatter(adatas[0], color=topic_name, ax=axes[1 + n_omics + i * n_omics if corresponding_features else 1 + i, j], crop_coord=crop_coord, img_alpha=img_alpha)
+                spatial_scatter(adatas[0], color=topic_name,
+                                ax=axes[1 + n_omics + i * n_omics if corresponding_features else 1 + i, j],
+                                crop_coord=crop_coord, img_alpha=img_alpha)
             if corresponding_features:
                 mrf = feature_topics[omics_names[i]].nlargest(1, topic_name).index[0]
                 if 'spatial' not in adatas[i].uns:
                     embedding(adatas[i], color=mrf, vmax='p99', size=size, show=False, cmap='coolwarm', basis='spatial',
-                            title=mrf + '\nMost relevant ' + element_names[i] + '\nw.r.t. ' + topic_name,
-                            ax=axes[1 + n_omics + i * n_omics + 1, j])
+                              title=mrf + '\nHighest ranking ' + element_names[i] + '\nw.r.t. ' + topic_name,
+                              ax=axes[1 + n_omics + i * n_omics + 1, j])
                 else:
-                    spatial(adatas[i], color=mrf, vmax='p99', cmap='coolwarm', show=False, ax=axes[1 + n_omics + i * n_omics + 1, j], title=mrf + '\nMost relevant ' + element_names[i] + '\nw.r.t. ' + topic_name)
-                    # spatial_scatter(adatas[i], color=mrf, cmap='coolwarm', ax=axes[1 + n_omics + i * n_omics + 1, j], crop_coord=crop_coord, title=mrf + '\nMost relevant ' + element_names[i] + '\nw.r.t. ' + topic_name, img_alpha=img_alpha)
+                    spatial(adatas[i], color=mrf, vmax='p99', cmap='coolwarm', show=False,
+                            ax=axes[1 + n_omics + i * n_omics + 1, j],
+                            title=mrf + '\nMost relevant ' + element_names[i] + '\nw.r.t. ' + topic_name)
     for i in range(n_omics):
         for j in range(zp_dims[i]):
             if corresponding_features:
@@ -188,14 +194,6 @@ def plot_embedding_results(adatas, omics_names, topic_abundance, feature_topics,
     if show:
         plt.show()
     plt.close()
-    if full:
-        for i in range(n_omics):
-            for topic in feature_topics[i].columns:
-                embedding(adatas[i], color=[topic] + feature_topics[i].nlargest(8, topic).index.tolist(),
-                          basis='spatial', size=size, show=False, ncols=3, vmax='p99')
-                fn = folder_path + omics_names[i] + '_' + topic + '.pdf'
-                plt.savefig(fn)
-                plt.close()
 
 
 def replace_legend(legend_texts):
@@ -253,7 +251,8 @@ def plot_clustering_results(adata, cluster_name, omics_names, folder_path, show=
             plt.show()
 
 
-def ST_preprocess(adata_st, normalize=True, log=True, prune=False, highly_variable_genes=True, n_top_genes=3000, pca=False, n_comps=50, scale=True):
+def ST_preprocess(adata_st, normalize=True, log=True, prune=False, highly_variable_genes=True, n_top_genes=3000,
+                  pca=False, n_comps=50, scale=True):
     adata = adata_st.copy()
 
     adata.var['mt'] = np.logical_or(adata.var_names.str.startswith('MT-'), adata.var_names.str.startswith('mt-'))
@@ -270,7 +269,7 @@ def ST_preprocess(adata_st, normalize=True, log=True, prune=False, highly_variab
 
     if highly_variable_genes:
         sc.pp.highly_variable_genes(adata, flavor='seurat_v3', n_top_genes=n_top_genes, subset=False)
-        
+
     if normalize:
         sc.pp.normalize_total(adata, target_sum=1e4)
     if log:
@@ -309,6 +308,7 @@ def clr_normalize_each_cell(adata, inplace=True):
     )
     return adata
 
+
 def tfidf(X):
     r"""
     TF-IDF normalization (following the Seurat v3 approach)
@@ -319,12 +319,13 @@ def tfidf(X):
         return tf.multiply(idf)
     else:
         tf = X / X.sum(axis=1, keepdims=True)
-        return tf * idf   
-    
+        return tf * idf
+
+
 def lsi(
         adata: anndata.AnnData, n_components: int = 20,
         use_highly_variable: Optional[bool] = None, random_state=0, key_added='X_lsi', **kwargs
-       ) -> None:
+) -> None:
     r"""
     LSI analysis (following the Seurat v3 approach)
     """
@@ -332,15 +333,16 @@ def lsi(
         use_highly_variable = "highly_variable" in adata.var
     adata_use = adata[:, adata.var["highly_variable"]] if use_highly_variable else adata
     X = tfidf(adata_use.X)
-    #X = adata_use.X
+    # X = adata_use.X
     X_norm = sklearn.preprocessing.Normalizer(norm="l1").fit_transform(X)
     X_norm = np.log1p(X_norm * 1e4)
     X_lsi = sklearn.utils.extmath.randomized_svd(X_norm, n_components, random_state=random_state, **kwargs)[0]
     X_lsi -= X_lsi.mean(axis=1, keepdims=True)
     X_lsi /= X_lsi.std(axis=1, ddof=1, keepdims=True)
-    #adata.obsm["X_lsi"] = X_lsi
-    adata.obsm[key_added] = X_lsi[:,1:]
-    
+    # adata.obsm["X_lsi"] = X_lsi
+    adata.obsm[key_added] = X_lsi[:, 1:]
+
+
 def preprocess_dc(datasets: List[AnnData], omics_names: List[str], scale: bool = False):
     '''
     # preprocess step for domain clustering
@@ -352,7 +354,8 @@ def preprocess_dc(datasets: List[AnnData], omics_names: List[str], scale: bool =
         # sc.pp.filter_genes(datasets[i], min_cells=10)
         # sc.pp.filter_cells(datasets[i], min_genes=200)
         if any(substring.lower() in omics_names[i].lower() for substring in ['Transcriptomics', 'RNA', 'Gene']):
-            datasets[i].var['mt'] = np.logical_or(datasets[i].var_names.str.startswith('MT-'), datasets[i].var_names.str.startswith('mt-'))
+            datasets[i].var['mt'] = np.logical_or(datasets[i].var_names.str.startswith('MT-'),
+                                                  datasets[i].var_names.str.startswith('mt-'))
             datasets[i].var['rb'] = datasets[i].var_names.str.startswith(('RP', 'Rp', 'rp'))
             sc.pp.calculate_qc_metrics(datasets[i], qc_vars=['mt'], inplace=True)
             mask_cell = datasets[i].obs['pct_counts_mt'] < 100
@@ -390,14 +393,16 @@ def preprocess_dc(datasets: List[AnnData], omics_names: List[str], scale: bool =
             sc.pp.pca(datasets[i], n_comps=n_comps, key_added='embedding')
         else:
             raise Exception("To be completed for " + omics_names[i] + ".")
-        datasets[i] = anndata.AnnData(datasets[i].obsm['embedding'], obs=datasets[i].obs, obsm=datasets[i].obsm, uns=datasets[i].uns)
+        datasets[i] = anndata.AnnData(datasets[i].obsm['embedding'], obs=datasets[i].obs, obsm=datasets[i].obsm,
+                                      uns=datasets[i].uns)
     return datasets
-            
+
+
 def log_mean_exp(value, dim=0, keepdim=False):
     return torch.logsumexp(value, dim, keepdim=keepdim) - math.log(value.size(dim))
 
 
-def mclust_R(adata, num_cluster, modelNames='EEE', used_obsm='emb_pca', random_seed=2025):
+def mclust_R(adata, num_cluster, used_obsm='emb_pca', add_key='SpaMV', random_seed=2025):
     """\
     Clustering using the mclust algorithm.
     The parameters are the same as those in the R package mclust.
@@ -407,18 +412,18 @@ def mclust_R(adata, num_cluster, modelNames='EEE', used_obsm='emb_pca', random_s
     import rpy2.robjects as robjects
     robjects.r.library("mclust")
 
-    import rpy2.robjects.numpy2ri
-    rpy2.robjects.numpy2ri.activate()
+    # import rpy2.robjects.numpy2ri
+    # rpy2.robjects.numpy2ri.activate()
     r_random_seed = robjects.r['set.seed']
     r_random_seed(random_seed)
     rmclust = robjects.r['Mclust']
 
-    res = rmclust(rpy2.robjects.numpy2ri.numpy2rpy(adata.obsm[used_obsm]), num_cluster, modelNames)
+    res = rmclust(rpy2.robjects.numpy2ri.numpy2rpy(adata.obsm[used_obsm]), num_cluster, 'EEE')
     mclust_res = np.array(res[-2])
 
-    adata.obs['mclust'] = mclust_res
-    adata.obs['mclust'] = adata.obs['mclust'].astype('int')
-    adata.obs['mclust'] = adata.obs['mclust'].astype('category')
+    adata.obs[add_key] = mclust_res
+    adata.obs[add_key] = adata.obs[add_key].astype('int')
+    adata.obs[add_key] = adata.obs[add_key].astype('category')
     return adata
 
 
@@ -436,8 +441,7 @@ def pca(adata, use_reps=None, n_comps=10):
     return feat_pca
 
 
-def clustering(adata, n_clusters=7, key='emb', add_key='SpatialGlue', method='mclust', start=0.1, end=3.0,
-               increment=0.01, use_pca=False, n_comps=20):
+def clustering(adata, n_clusters=7, key='emb', add_key='SpaMV', use_pca=False, n_comps=20):
     """\
     Spatial clustering based the latent representation.
 
@@ -470,29 +474,7 @@ def clustering(adata, n_clusters=7, key='emb', add_key='SpatialGlue', method='mc
         adata.obsm[key + '_pca'] = pca(adata, use_reps=key,
                                        n_comps=n_comps if adata.obsm[key].shape[1] > n_comps else adata.obsm[key].shape[
                                            1])
-
-    if method == 'mclust':
-        if use_pca:
-            adata = mclust_R(adata, used_obsm=key + '_pca', num_cluster=n_clusters)
-        else:
-            adata = mclust_R(adata, used_obsm=key, num_cluster=n_clusters)
-        adata.obs[add_key] = adata.obs['mclust']
-    elif method == 'leiden':
-        if use_pca:
-            res = search_res(adata, n_clusters, use_rep=key + '_pca', method=method, start=start, end=end,
-                             increment=increment)
-        else:
-            res = search_res(adata, n_clusters, use_rep=key, method=method, start=start, end=end, increment=increment)
-        sc.tl.leiden(adata, random_state=0, resolution=res)
-        adata.obs[add_key] = adata.obs['leiden']
-    elif method == 'louvain':
-        if use_pca:
-            res = search_res(adata, n_clusters, use_rep=key + '_pca', method=method, start=start, end=end,
-                             increment=increment)
-        else:
-            res = search_res(adata, n_clusters, use_rep=key, method=method, start=start, end=end, increment=increment)
-        sc.tl.louvain(adata, random_state=0, resolution=res)
-        adata.obs[add_key] = adata.obs['louvain']
+    adata = mclust_R(adata, used_obsm=key + '_pca' if use_pca else key, num_cluster=n_clusters, add_key=add_key)
 
 
 def search_res(adata, n_clusters, method='leiden', use_rep='emb', start=0.1, end=3.0, increment=0.01):
@@ -560,7 +542,8 @@ def compute_similarity(z, w=None):
         for wi in w:
             for i in wi.columns[:-1]:
                 for j in wi.columns[np.where(wi.columns == i)[0][0] + 1:]:
-                    similarity_feature.loc[i, j] += cosine_similarity(wi[i], wi[j]) / 2 if i in z.columns and j in z.columns else cosine_similarity(wi[i], wi[j])
+                    similarity_feature.loc[i, j] += cosine_similarity(wi[i], wi[
+                        j]) / 2 if i in z.columns and j in z.columns else cosine_similarity(wi[i], wi[j])
         return similarity_spot, similarity_feature
     else:
         return similarity_spot
@@ -597,54 +580,54 @@ def compute_gene_topic_correlations(adata, z):
             z = pd.DataFrame(z)
         except:
             raise ValueError("z must be convertible to a pandas DataFrame")
-    
+
     # Ensure z contains numerical data
     if not np.issubdtype(z.values.dtype, np.number):
         raise ValueError("Topic matrix 'z' must contain numerical values")
-    
+
     # Get gene expression matrix
     if isinstance(adata.X, np.ndarray):
         gene_expr = adata.X
     else:
         gene_expr = adata.X.toarray()  # Convert sparse matrix to dense if needed
-    
+
     # Ensure gene expression data is numerical
     if not np.issubdtype(gene_expr.dtype, np.number):
         raise ValueError("Gene expression matrix must contain numerical values")
-    
+
     # Check for NaN or infinite values
     if np.any(np.isnan(gene_expr)) or np.any(np.isinf(gene_expr)):
         raise ValueError("Gene expression matrix contains NaN or infinite values")
-    
+
     if np.any(z.isna()) or np.any(np.isinf(z.values)):
         raise ValueError("Topic matrix contains NaN or infinite values")
-    
+
     # Initialize correlation matrix
     n_genes = gene_expr.shape[1]
     n_topics = z.shape[1]
     correlations = np.zeros((n_genes, n_topics))
     p_values = np.zeros((n_genes, n_topics))
-    
+
     # Compute correlations for each gene-topic pair
     for i in range(n_genes):
         for j in range(n_topics):
             corr, p_val = pearsonr(gene_expr[:, i], z.iloc[:, j].values)
             correlations[i, j] = corr
             p_values[i, j] = p_val
-    
+
     # Create DataFrames with gene names and topic names
     correlation_df = pd.DataFrame(
         correlations,
         index=adata.var_names,
         columns=z.columns if z.columns is not None else [f'Topic_{i}' for i in range(n_topics)]
     )
-    
+
     pvalue_df = pd.DataFrame(
         p_values,
         index=adata.var_names,
         columns=z.columns if z.columns is not None else [f'Topic_{i}' for i in range(n_topics)]
     )
-    
+
     return correlation_df, pvalue_df
 
     """
@@ -677,6 +660,7 @@ def compute_gene_topic_correlations(adata, z):
             top_genes[topic] = correlation_df[topic].nlargest(n_genes)
     return top_genes
 
+
 def plot_top_positive_correlations_boxplot(adata, z, omics_name, n_top=None, figsize=(12, 6)):
     """
     Create boxplots for each topic showing only the top n positive correlations.
@@ -700,7 +684,7 @@ def plot_top_positive_correlations_boxplot(adata, z, omics_name, n_top=None, fig
         positive_corrs = corr_df[topic][corr_df[topic] > 0]
         # Get top n
         top_correlations_dict[topic] = positive_corrs.nlargest(n_top)
-    
+
     # Convert to long format for plotting
     plot_data = []
     for topic, corrs in top_correlations_dict.items():
@@ -711,10 +695,10 @@ def plot_top_positive_correlations_boxplot(adata, z, omics_name, n_top=None, fig
                 'Correlation': corr
             })
     plot_df = pd.DataFrame(plot_data)
-    
+
     # Create the plot
     plt.figure(figsize=figsize)
-    
+
     # Create boxplot
     sns.boxplot(
         data=plot_df,
@@ -722,22 +706,23 @@ def plot_top_positive_correlations_boxplot(adata, z, omics_name, n_top=None, fig
         y='Correlation',
         color='skyblue'
     )
-    
+
     # Customize the plot
     # plt.title(f'Distribution of Top {n_top} Correlations with {omics_name} per Topic')
     plt.xlabel('')
     plt.ylabel('Pearson Correlation Coefficients')
-    
+
     # Rotate x-axis labels if needed
     plt.xticks(rotation=45, ha='right', rotation_mode='anchor')
-    
+
     # Add gridlines
     plt.grid(axis='y', linestyle='--', alpha=0.7)
-    
+
     # Adjust layout to prevent label cutoff
     plt.tight_layout()
-    
+
     return plt.gcf()
+
 
 def plot_topic_correlation_ratio_multimodal(data, omics_names, z, k_values=None, figsize=(10, 8)):
     """
@@ -762,61 +747,61 @@ def plot_topic_correlation_ratio_multimodal(data, omics_names, z, k_values=None,
         raise ValueError("Number of datasets must match number of omics names")
     if len(data) != 2:
         raise ValueError("This function currently supports exactly 2 modalities")
-        
+
     # Set default k values if not provided
     if k_values is None:
         k_values = {name: 5 if name in ['Proteomics'] else 10 for name in omics_names}
-    
+
     # Compute correlations for each modality
     modality_corrs = {}
     for data, name in zip(data, omics_names):
         corr_df, _ = compute_gene_topic_correlations(data, z)
         modality_corrs[name] = corr_df
-    
+
     # Calculate mean top-k correlations for each modality
     topic_means = {name: [] for name in omics_names}
-    
+
     for topic in z.columns:
         for name in omics_names:
             # Get top k correlations for this modality
             top_k_corrs = np.sort(modality_corrs[name][topic].values)[-k_values[name]:]
             topic_means[name].append(np.mean(top_k_corrs))
-    
+
     # Calculate log2 fold change
-    log2_fold_changes = np.log2(np.array(topic_means[omics_names[0]]) / 
-                               np.array(topic_means[omics_names[1]]))
-    
+    log2_fold_changes = np.log2(np.array(topic_means[omics_names[0]]) /
+                                np.array(topic_means[omics_names[1]]))
+
     # Create DataFrame with results
     result_df = pd.DataFrame({
         'Topic': z.columns,
         'Log2 Fold Change': log2_fold_changes
     })
-    
+
     # Sort by log2 fold change
     result_df = result_df.sort_values('Log2 Fold Change', ascending=True)
-    
+
     # Create horizontal bar plot
     plt.figure(figsize=figsize)
     bars = plt.barh(range(len(result_df)), result_df['Log2 Fold Change'])
-    
+
     # Color bars based on which modality has stronger correlation
     for i, bar in enumerate(bars):
         if result_df['Log2 Fold Change'].iloc[i] > 0:
             bar.set_color('skyblue')  # First modality stronger
         else:
             bar.set_color('lightgreen')  # Second modality stronger
-    
+
     # Customize the plot
     plt.title(f'Log2 Fold Change of Top Correlations\n({omics_names[0]} vs {omics_names[1]})')
     plt.xlabel(f'Log2 Fold Change')
     plt.ylabel('Topics')
-    
+
     # Set topic names as y-axis labels
     plt.yticks(range(len(result_df)), result_df['Topic'])
-    
+
     # Add grid for better readability
     plt.grid(axis='x', linestyle='--', alpha=0.7)
-    
+
     # Add legend
     from matplotlib.patches import Patch
     legend_elements = [
@@ -824,6 +809,6 @@ def plot_topic_correlation_ratio_multimodal(data, omics_names, z, k_values=None,
         Patch(facecolor='lightgreen', label=f'Stronger {omics_names[1]} correlation')
     ]
     plt.legend(handles=legend_elements, loc='lower right')
-    
+
     plt.tight_layout()
     return plt.gcf()
