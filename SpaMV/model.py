@@ -13,7 +13,7 @@ from torch.distributions import HalfCauchy
 from torch_geometric.nn import GCN, GAT
 
 from .dist import NB, ZINB
-from .layers import MLPEncoder, Decoder, Decoder_zi_logits
+from .layers import GATEncoder, Decoder, Decoder_zi_logits
 
 scale_init = math.log(0.01)
 
@@ -46,11 +46,11 @@ class spamv(PyroModule):
                     setattr(self, "decoder_zi_logits_" + omics_names[i],
                             Decoder_zi_logits(self.latent_dims[i], hidden_size, data_dims[i]))
                 setattr(self, "zs_encoder_" + omics_names[i],
-                        MLPEncoder(data_dims[i], hidden_size, zs_dim, heads).to(device))
+                        GATEncoder(data_dims[i], hidden_size, zs_dim, heads).to(device))
                 if zp_dims[i] > 0:
                     if interpretable:
                         setattr(self, "zp_encoder_" + omics_names[i],
-                                MLPEncoder(data_dims[i], hidden_size, zp_dims[i], heads).to(device))
+                                GATEncoder(data_dims[i], hidden_size, zp_dims[i], heads).to(device))
                 self.set_attr(["c"], i, (1))
                 self.set_attr(["delta", "bg"], i, data_dims[i])
                 self.set_attr(["tau"], i, (self.latent_dims[i], 1))
@@ -265,6 +265,18 @@ class spamv(PyroModule):
         for i, data in zip(range(self.n_omics), datas):
             zs += getattr(self, "zs_encoder_" + self.omics_names[i])(data.x, data.edge_index)[:batch_size].split(self.zs_dim, 1)[0] / self.n_omics
         return zs
+
+    def get_separate_embedding(self, data, edge_index):
+        self.eval()
+        output = {}
+        with torch.no_grad():
+            for i, d, e in zip(range(len(data)), data, edge_index):
+                zs_mean = getattr(self, "zs_encoder_" + self.omics_names[i])(d, e).split(self.zs_dim, 1)[0]
+                output['zs_' + self.omics_names[i]] = zs_mean
+                if self.zp_dims[i] > 0:
+                    zp_mean = getattr(self, "zp_encoder_" + self.omics_names[i])(d, e).split(self.zp_dims[i], 1)[0]
+                    output['zp_' + self.omics_names[i]] = zp_mean
+        return output
 
     @torch.inference_mode()
     def get_feature_by_topic(self):

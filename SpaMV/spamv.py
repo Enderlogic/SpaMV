@@ -1,6 +1,5 @@
 """Main module."""
 from typing import List
-import rbo
 import numpy as np
 import pyro
 import scanpy
@@ -25,12 +24,12 @@ from torch_geometric import seed_everything
 import os
 from .model import spamv
 from .layers import Measurement
-from .utils import adjacent_matrix_preprocessing, get_init_bg, log_mean_exp
+from .utils import adjacent_matrix_preprocessing, get_init_bg, log_mean_exp, RankingSimilarity, split_numbers, \
+    GaussianKernelMatrix
 
 from torch_geometric.data import Data
 from torch_geometric.loader import NeighborLoader
-import warnings
-warnings.filterwarnings("ignore")
+
 
 def set_seed(seed):
     """Set seed for all random number generators and ensure deterministic operations."""
@@ -63,26 +62,6 @@ def set_seed(seed):
 
     # Set environment variables for deterministic behavior
     os.environ['PYTHONHASHSEED'] = str(seed)
-
-
-def pairwise_distances(x):
-    # x should be two dimensional
-    instances_norm = torch.sum(x ** 2, -1).reshape((-1, 1))
-    return -2 * torch.mm(x, x.t()) + instances_norm + instances_norm.t()
-
-
-def GaussianKernelMatrix(x, sigma=1):
-    pairwise_distances_ = pairwise_distances(x)
-    return torch.exp(-pairwise_distances_ / sigma)
-
-
-def split_numbers(max_number, chunk_size):
-    lists = []
-    for start in range(0, max_number, chunk_size):
-        end = min(start + chunk_size, max_number)
-        lists.append(list(range(start, end)))
-    return lists
-
 
 def get_importance_trace(graph_type, max_plate_nesting, model, guide, args, detach=False):
     """
@@ -122,6 +101,9 @@ def get_importance_trace(graph_type, max_plate_nesting, model, guide, args, deta
 
     return model_trace, guide_trace
 
+def softmax(x):
+    e_x = np.exp(x - np.max(x))  # Subtract max for numerical stability
+    return e_x / e_x.sum()
 
 class SpaMV:
     def __init__(self, adatas: List[AnnData], interpretable: bool, zp_dims: List[int] = None, zs_dim: int = None,
@@ -158,18 +140,19 @@ class SpaMV:
         else:
             self.weights = weights
         if betas is None:
-            self.betas = [1 for _ in range(self.n_omics)]
+            self.betas = [10 if interpretable else 1 for _ in range(self.n_omics)]
         elif min(betas) < 0:
             raise ValueError("all elements in betas must be non-negative")
         else:
             self.betas = betas
         if recon_types is None:
-            self.recon_types = ["nb" if interpretable else "gauss" for _ in range(self.n_omics)]
+            recon_types = ["nb" if interpretable else "gauss" for _ in range(self.n_omics)]
         else:
             for recon_type in recon_types:
                 if recon_type not in ['zinb', 'nb', 'gauss']:
-                    raise ValueError("recon_type must be one of ['nb', 'zinb', 'gauss']")
-            self.recon_types = recon_types
+                    raise ValueError("recon_type must be 'nb' or 'zinb' or 'gauss'")
+
+        self.recon_types = recon_types
         if hidden_dim is None:
             self.hidden_dim = 128 if interpretable else 256
         elif hidden_dim <= 0:
@@ -183,6 +166,8 @@ class SpaMV:
             self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         if learning_rate is None:
             self.learning_rate = 1e-2 if interpretable else 1e-3
+        elif learning_rate <= 0:
+            raise ValueError("learning_rate must be a positive number")
         else:
             self.learning_rate = learning_rate
         self.adatas = adatas
@@ -194,22 +179,21 @@ class SpaMV:
         else:
             self.batch_size = batch_size
         print(self.device)
-        self.heads = heads
         self.neighborhood_depth = neighborhood_depth
         self.neighborhood_embedding = neighborhood_embedding
+
         self.interpretable = interpretable
         self.max_epochs_stage1 = max_epochs_stage1
         self.max_epochs_stage2 = max_epochs_stage2
         self.early_stopping = early_stopping
         self.patience = patience
         self.pretrain_epoch = 200 if interpretable else 10
-        self.epoch = 0
-        self.epoch2 = 0
+        self.epoch_stage1 = 0
+        self.epoch_stage2 = 0
         self.threshold_noise = threshold_noise
         self.threshold_background = threshold_background
         self.meaningful_dimensions = {}
 
-        print('Loading data')
         data = [Data(
             x=torch.tensor(np.ascontiguousarray(adatas[i].X.toarray() if issparse(adatas[i].X) else adatas[i].X),
                            device=self.device, dtype=torch.float),
@@ -225,7 +209,6 @@ class SpaMV:
                            self.recon_types, heads, interpretable, self.device, self.omics_names)
 
     def train(self):
-
         self.model = self.model.to(self.device)
         if self.early_stopping:
             self.early_stopper = EarlyStopper(patience=self.patience)
@@ -241,13 +224,13 @@ class SpaMV:
         params = set(site["value"].unconstrained() for site in param_capture.trace.nodes.values())
         optimizer = Adam(params, lr=self.learning_rate, betas=(.9, .999), weight_decay=0, eps=1e-8)
 
-        for self.epoch in pbar:
+        for self.epoch_stage1 in pbar:
             for batch_idx in range(len(self.root_node_indices)):
                 batch_data = [self.loader[i](self.root_node_indices[batch_idx]) for i in range(self.n_omics)]
-                if self.epoch == self.pretrain_epoch:
+                if self.epoch_stage1 == self.pretrain_epoch:
                     self.early_stopper.min_training_loss = np.inf
-                if self.epoch >= self.pretrain_epoch:
-                    if self.epoch % 100 == 0 or self.epoch == self.pretrain_epoch:
+                if self.epoch_stage1 >= self.pretrain_epoch:
+                    if self.epoch_stage1 % 100 == 0 or self.epoch_stage1 == self.pretrain_epoch:
                         n_epochs = 100
                         self.measurement = Measurement(self.zp_dims, self.hidden_dim, self.data_dims, self.recon_types,
                                                        self.omics_names, self.interpretable).to(self.device)
@@ -281,14 +264,14 @@ class SpaMV:
             params_zs = set(site["value"].unconstrained() for site in param_capture.trace.nodes.values() if
                             'zp' not in site['name'])
             optimizer_zs = Adam(params_zs, lr=self.learning_rate, betas=(.9, .999), weight_decay=0, eps=1e-8)
-            pbar = tqdm(range(self.epoch, self.max_epochs_stage2 + self.epoch), position=0, leave=True)
+            pbar = tqdm(range(self.epoch_stage1, self.max_epochs_stage2 + self.epoch_stage1), position=0, leave=True)
             self.early_stopper.min_training_loss = np.inf
             zps = self.model.get_private_latent([self.loader[i](range(self.n_obs)) for i in range(self.n_omics)], False)
 
             scanpy.pp.neighbors(self.adatas[0], use_rep='spatial')
             for i in range(self.n_omics):
                 self.meaningful_dimensions['zp_' + self.omics_names[i]] = self.get_meaningful_dimensions(zps[i])
-            for self.epoch2 in pbar:
+            for self.epoch_stage2 in pbar:
                 for batch_idx in range(len(self.root_node_indices)):
                     batch_data = [self.loader[i](self.root_node_indices[batch_idx]) for i in range(self.n_omics)]
                     # train shared model
@@ -348,7 +331,7 @@ class SpaMV:
                          range(len(self.data_dims))])) * guide_site['scale']).sum() if "zs" in name else guide_site[
                         'log_prob_sum']
                     elbo_particle += (model_site["log_prob_sum"] - entropy_term)
-        if self.epoch >= self.pretrain_epoch:
+        if self.epoch_stage1 >= self.pretrain_epoch:
             self.measurement.eval()
             output = self.measurement(self.model.get_private_latent(datas, True))
             for i in range(self.n_omics):
@@ -384,16 +367,11 @@ class SpaMV:
                     omics_name = name.split("_")[1]
                     for on in self.omics_names:
                         if on != omics_name:
-                            # loss_hsic = self.HSIC(guide_site['fn'].mean,
-                            #                       guide_trace.nodes["zp_" + on]["fn"].mean.detach()[:,
-                            #                       self.meaningful_dimensions['zp_' + on]]) * batch_size * np.sqrt(
-                            #     self.data_dims[self.omics_names.index(on)]) * self.betas[self.omics_names.index(on)]
                             loss_hsic = self.HSIC(guide_site['fn'].mean,
                                                   guide_trace.nodes["zp_" + on]["fn"].mean.detach()[:,
                                                   self.meaningful_dimensions['zp_' + on]]) * batch_size * np.sqrt(
-                                self.data_dims[self.omics_names.index(on)])
+                                self.data_dims[self.omics_names.index(on)]) * self.betas[self.omics_names.index(on)]
                             elbo_particle -= loss_hsic
-
         return -elbo_particle
 
     def get_measurement_loss(self, datas):
@@ -413,7 +391,16 @@ class SpaMV:
                         loss += mse_loss(output[name], datas[j].x[:batch_size]) * np.sqrt(batch_size)
         return loss
 
-    def get_embedding(self):
+    def save(self, path):
+        self.model.save(path)
+
+    def load(self, path, map_location=torch.device('cpu')):
+        self.model.load(path, map_location=map_location)
+
+    def get_separate_embedding(self):
+        return self.model.get_separate_embedding(self.x, self.edge_index)
+
+    def get_embedding(self, use_softmax=True):
         '''
         This function is used to get the embeddings. The returned embedding is stored in a pandas dataframe object if
         the model is in interpretable mode. Shared embeddings will be present in the first zs_dim columns, and private
@@ -436,11 +423,13 @@ class SpaMV:
                                  range(self.zp_dims[i])]
             spot_topic = DataFrame(z_mean.detach().cpu().numpy(), columns=columns_name)
             spot_topic.set_index(self.adatas[0].obs_names, inplace=True)
+            if use_softmax:
+                spot_topic = spot_topic.apply(lambda row: softmax(row), axis=1)
             return spot_topic
         else:
             return F.normalize(z_mean).detach().cpu().numpy()
 
-    def get_embedding_and_feature_by_topic(self, merge=True, threshold=.4):
+    def get_embedding_and_feature_by_topic(self, use_softmax=True, merge=True, threshold=.4):
         '''
         This function is used to get the feature by topic. The returned list contains feature by topic for each modality
         according to their input order. The row names in the returned dataframes are the feature names in the
@@ -483,7 +472,9 @@ class SpaMV:
                 feature_topic[self.omics_names[i]] = feature_topic[self.omics_names[i]][existing_topics]
 
             if merge:
-                spot_topic, feature_topic = self.merge(spot_topic, feature_topic, threshold=threshold)
+                spot_topic, feature_topic = self.merge(spot_topic, feature_topic, threshold)
+            if use_softmax:
+                spot_topic = spot_topic.apply(lambda row: softmax(row), axis=1)
             return spot_topic, feature_topic
         else:
             raise Exception("This function can only be used with interpretable mode.")
@@ -501,19 +492,20 @@ class SpaMV:
             merge = False
             for topic_i in spot_topic.columns:
                 for topic_j in spot_topic.columns:
-                    oi = 'Shared' if 'Shared' in topic_i else ' '.join(topic_i.split()[:-3])
-                    oj = 'Shared' if 'Shared' in topic_j else ' '.join(topic_j.split()[:-3])
-                    if spot_topic.columns.get_loc(topic_j) > spot_topic.columns.get_loc(topic_i) and oi == oj:
-                        if oi == 'Shared':
-                            sim = min([rbo.RankingSimilarity(
+                    if spot_topic.columns.get_loc(topic_j) > spot_topic.columns.get_loc(topic_i) and topic_i.split(' ')[
+                        0] == topic_j.split(' ')[0]:
+                        on = topic_i.split(' ')[0]
+                        if on == 'Shared':
+                            sim = min([RankingSimilarity(
                                 feature_topic[self.omics_names[i]].nlargest(topks[i], topic_i).index.tolist(),
                                 feature_topic[self.omics_names[i]].nlargest(topks[i], topic_j).index.tolist()).rbo() for
-                                       i in range(self.n_omics)])
+                                       i in
+                                       range(self.n_omics)])
                         else:
-                            sim = rbo.RankingSimilarity(
-                                feature_topic[oi].nlargest(topks[self.omics_names.index(oi)],
+                            sim = RankingSimilarity(
+                                feature_topic[on].nlargest(topks[self.omics_names.index(on)],
                                                            topic_i).index.tolist(),
-                                feature_topic[oj].nlargest(topks[self.omics_names.index(oj)],
+                                feature_topic[on].nlargest(topks[self.omics_names.index(on)],
                                                            topic_j).index.tolist()).rbo()
                         if sim > threshold:
                             print('merge', topic_i, 'and', topic_j)

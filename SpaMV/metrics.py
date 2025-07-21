@@ -10,6 +10,7 @@ from sklearn.metrics import adjusted_rand_score, mutual_info_score, normalized_m
 
 
 def compute_moranI(adata, key):
+    # sc.pp.neighbors(adata, use_rep='spatial')
     g = kneighbors_graph(adata.obsm['spatial'], 6, mode='connectivity', metric='euclidean')
     one_hot = get_dummies(adata.obs[key])
     moranI = sc.metrics.morans_i(g, one_hot.values.T).mean()

@@ -3,9 +3,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATv2Conv, BatchNorm
 
-class MLPEncoder(nn.Module):
+class GATEncoder(nn.Module):
     def __init__(self, in_dim, hidden_dim, out_dim, heads=1):
-        super(MLPEncoder, self).__init__()
+        super(GATEncoder, self).__init__()
         self.out_dim = out_dim
         self.conv1 = GATv2Conv(in_dim, hidden_dim, heads=heads)
         self.batch_norm1 = BatchNorm(hidden_dim * heads)
