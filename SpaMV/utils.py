@@ -29,6 +29,7 @@ from anndata import AnnData
 from tqdm import tqdm
 import rpy2
 
+
 def construct_graph_by_coordinate(cell_position, neighborhood_depth=3, device='cpu'):
     '''
     Constructing spatial neighbor graph according to spatial coordinates.
@@ -95,7 +96,7 @@ def remove_box(ax):
 
 def plot_embedding_results(adatas, omics_names, topic_abundance, feature_topics, save=True, folder_path=None,
                            file_name=None, show=False, corresponding_features=True, size=350, crop_coord=None, rb=True,
-                           img_alpha=.5):
+                           img_alpha=1):
     element_names = []
     for omics_name in omics_names:
         if omics_name in ["Transcriptomics", "Transcriptome"] or "H3K27" in omics_name:
@@ -106,6 +107,8 @@ def plot_embedding_results(adatas, omics_names, topic_abundance, feature_topics,
             element_names.append("Region of open chromatin")
         elif omics_name in ["Metabolomics", "Metabolome", "Metabonomics", "Metabonome"]:
             element_names.append("Metabolite")
+        else:
+            element_names.append(omics_name + '\'s feature')
     zs_dim = len([item for item in topic_abundance.columns if 'Shared' in item])
     n_omics = len(adatas)
     zp_dims = []
@@ -130,7 +133,7 @@ def plot_embedding_results(adatas, omics_names, topic_abundance, feature_topics,
         if 'spatial' not in adatas[0].uns:
             embedding(adatas[0], color=topic_name, vmax='p99', size=size, show=False, basis='spatial', ax=axes[0, i])
         else:
-            spatial_scatter(adatas[0], color=topic_name, ax=axes[0, i], crop_coord=crop_coord)
+            spatial_scatter(adatas[0], color=topic_name, ax=axes[0, i], crop_coord=crop_coord, img_alpha=img_alpha)
         if corresponding_features:
             for j in range(n_omics):
                 mrf = feature_topics[omics_names[j]].nlargest(1, topic_name).index[0]
@@ -322,10 +325,8 @@ def tfidf(X):
         return tf * idf
 
 
-def lsi(
-        adata: anndata.AnnData, n_components: int = 20,
-        use_highly_variable: Optional[bool] = None, random_state=0, key_added='X_lsi', **kwargs
-) -> None:
+def lsi(adata: anndata.AnnData, n_components: int = 20, use_highly_variable: Optional[bool] = None, random_state=0,
+        key_added='X_lsi', **kwargs) -> None:
     r"""
     LSI analysis (following the Seurat v3 approach)
     """
@@ -333,34 +334,33 @@ def lsi(
         use_highly_variable = "highly_variable" in adata.var
     adata_use = adata[:, adata.var["highly_variable"]] if use_highly_variable else adata
     X = tfidf(adata_use.X)
-    # X = adata_use.X
     X_norm = sklearn.preprocessing.Normalizer(norm="l1").fit_transform(X)
     X_norm = np.log1p(X_norm * 1e4)
     X_lsi = sklearn.utils.extmath.randomized_svd(X_norm, n_components, random_state=random_state, **kwargs)[0]
     X_lsi -= X_lsi.mean(axis=1, keepdims=True)
     X_lsi /= X_lsi.std(axis=1, ddof=1, keepdims=True)
-    # adata.obsm["X_lsi"] = X_lsi
     adata.obsm[key_added] = X_lsi[:, 1:]
 
 
-def preprocess_dc(datasets: List[AnnData], omics_names: List[str], scale: bool = False):
+def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool = True, hvg: bool = True,
+                  n_top_genes: int = 3000, normalization: bool = True, target_sum: float = 1e4, log1p: bool = True,
+                  scale: bool = False):
     '''
     # preprocess step for domain clustering
     '''
     # prune low quality features and spots
-    for i in range(len(datasets)):
-        sc.pp.filter_genes(datasets[i], min_cells=round(datasets[i].n_obs / 100))
-        sc.pp.filter_cells(datasets[i], min_genes=round(datasets[i].n_vars / 100))
-        # sc.pp.filter_genes(datasets[i], min_cells=10)
-        # sc.pp.filter_cells(datasets[i], min_genes=200)
-        if any(substring.lower() in omics_names[i].lower() for substring in ['Transcriptomics', 'RNA', 'Gene']):
-            datasets[i].var['mt'] = np.logical_or(datasets[i].var_names.str.startswith('MT-'),
-                                                  datasets[i].var_names.str.startswith('mt-'))
-            datasets[i].var['rb'] = datasets[i].var_names.str.startswith(('RP', 'Rp', 'rp'))
-            sc.pp.calculate_qc_metrics(datasets[i], qc_vars=['mt'], inplace=True)
-            mask_cell = datasets[i].obs['pct_counts_mt'] < 100
-            mask_gene = np.logical_and(~datasets[i].var['mt'], ~datasets[i].var['rb'])
-            datasets[i] = datasets[i][mask_cell, mask_gene]
+    if prune:
+        for i in range(len(datasets)):
+            sc.pp.filter_genes(datasets[i], min_cells=round(datasets[i].n_obs / 100))
+            sc.pp.filter_cells(datasets[i], min_genes=round(datasets[i].n_vars / 100))
+            if any(substring.lower() in omics_names[i].lower() for substring in ['Transcriptomics', 'RNA', 'Gene']):
+                datasets[i].var['mt'] = np.logical_or(datasets[i].var_names.str.startswith('MT-'),
+                                                      datasets[i].var_names.str.startswith('mt-'))
+                datasets[i].var['rb'] = datasets[i].var_names.str.startswith(('RP', 'Rp', 'rp'))
+                sc.pp.calculate_qc_metrics(datasets[i], qc_vars=['mt'], inplace=True)
+                mask_cell = datasets[i].obs['pct_counts_mt'] < 100
+                mask_gene = np.logical_and(~datasets[i].var['mt'], ~datasets[i].var['rb'])
+                datasets[i] = datasets[i][mask_cell, mask_gene]
     remained_spots = datasets[0].obs_names
     n_comps = min(50, datasets[0].n_vars - 1)
     for i in range(1, len(datasets)):
@@ -369,25 +369,34 @@ def preprocess_dc(datasets: List[AnnData], omics_names: List[str], scale: bool =
     for i in range(len(datasets)):
         datasets[i] = datasets[i][remained_spots, :]
         if any(substring.lower() in omics_names[i].lower() for substring in ['Transcriptomics', 'RNA', 'Gene']):
-            sc.pp.highly_variable_genes(datasets[i], flavor='seurat_v3', n_top_genes=3000, subset=False)
-            sc.pp.normalize_total(datasets[i], target_sum=1e4)
-            datasets[i] = datasets[i][:, datasets[i].var.highly_variable]
-            sc.pp.log1p(datasets[i])
+            if hvg:
+                sc.pp.highly_variable_genes(datasets[i], flavor='seurat_v3', n_top_genes=n_top_genes, subset=False)
+            if normalization:
+                sc.pp.normalize_total(datasets[i], target_sum=target_sum)
+            if hvg:
+                datasets[i] = datasets[i][:, datasets[i].var.highly_variable]
+            if log1p:
+                sc.pp.log1p(datasets[i])
             if scale:
                 sc.pp.scale(datasets[i])
-            # datasets[i] = anndata.AnnData(pca(datasets[i], n_comps=n_comps), obs=datasets[i].obs, obsm=datasets[i].obsm, uns=datasets[i].uns)
-            # datasets[i].obsm['embedding'] = pca(datasets[i], n_comps=n_comps)
             sc.pp.pca(datasets[i], n_comps=n_comps, key_added='embedding')
         elif any(substring.lower() in omics_names[i].lower() for substring in ['Proteomics', 'ADT', 'Protein']):
-            datasets[i] = clr_normalize_each_cell(datasets[i])
+            if normalization:
+                datasets[i] = clr_normalize_each_cell(datasets[i])
             if scale:
                 sc.pp.scale(datasets[i])
             sc.pp.pca(datasets[i], n_comps=n_comps, key_added='embedding')
         elif any(substring.lower() in omics_names[i].lower() for substring in ['Epigenomics', 'peaks']):
             lsi(datasets[i], use_highly_variable=False, n_components=n_comps + 1, key_added='embedding')
         elif any(substring.lower() in omics_names[i].lower() for substring in ['Metabolomics', 'Metabolite']):
-            sc.pp.normalize_total(datasets[i], target_sum=1e4)
-            sc.pp.log1p(datasets[i])
+            if normalization:
+                sc.pp.normalize_total(datasets[i], target_sum=target_sum)
+            if log1p:
+                sc.pp.log1p(datasets[i])
+            if scale:
+                sc.pp.scale(datasets[i])
+            sc.pp.pca(datasets[i], n_comps=n_comps, key_added='embedding')
+        elif any(substring.lower() in omics_names[i].lower() for substring in ['H3K27ac', 'H3K27me3']):
             if scale:
                 sc.pp.scale(datasets[i])
             sc.pp.pca(datasets[i], n_comps=n_comps, key_added='embedding')
@@ -440,7 +449,7 @@ def pca(adata, use_reps=None, n_comps=10):
     return feat_pca
 
 
-def clustering(adata, n_clusters=7, key='emb', add_key='SpaMV', use_pca=False, n_comps=20):
+def clustering(adata, n_clusters=7, key='emb', add_key='SpaMV', use_pca=True, n_comps=20):
     """\
     Spatial clustering based the latent representation.
 
@@ -818,11 +827,12 @@ class RankingSimilarity:
     This class will include some similarity measures between two different
     ranked lists.
     """
+
     def __init__(
-        self,
-        S: Union[List, np.ndarray],
-        T: Union[List, np.ndarray],
-        verbose: bool = False,
+            self,
+            S: Union[List, np.ndarray],
+            T: Union[List, np.ndarray],
+            verbose: bool = False,
     ) -> None:
         """
         Initialize the object with the required lists.
@@ -877,10 +887,10 @@ class RankingSimilarity:
             return less_than_one
 
     def rbo(
-        self,
-        k: Optional[float] = None,
-        p: float = 1.0,
-        ext: bool = False,
+            self,
+            k: Optional[float] = None,
+            p: float = 1.0,
+            ext: bool = False,
     ) -> float:
         """
         This the weighted non-conjoint measures, namely, rank-biased overlap.
@@ -926,7 +936,7 @@ class RankingSimilarity:
             weights = [1.0 for _ in range(k)]
         else:
             self.assert_p(p)
-            weights = [1.0 * (1 - p) * p**d for d in range(k)]
+            weights = [1.0 * (1 - p) * p ** d for d in range(k)]
 
         # using dict for O(1) look up
         S_running, T_running = {self.S[0]: True}, {self.T[0]: True}
@@ -961,7 +971,7 @@ class RankingSimilarity:
             T_running[self.T[d]] = True
 
         if ext and p < 1:
-            return self._bound_range(AO[-1] + A[-1] * p**k)
+            return self._bound_range(AO[-1] + A[-1] * p ** k)
 
         return self._bound_range(AO[-1])
 
@@ -1027,9 +1037,9 @@ class RankingSimilarity:
                 X[d] = X[d - 1] + overlap_incr
                 # Eq. (28) that handles the tie. len() is O(1)
                 A[d] = 2.0 * X[d] / (len(S_running) + len(L_running))
-                rbo[d] = rbo[d - 1] + 1.0 * (1 - p) * (p**d) * A[d]
+                rbo[d] = rbo[d - 1] + 1.0 * (1 - p) * (p ** d) * A[d]
 
-                ext_term = 1.0 * A[d] * p**(d + 1)  # the extrapolate term
+                ext_term = 1.0 * A[d] * p ** (d + 1)  # the extrapolate term
 
             else:  # the short list has fallen off the cliff
                 L_running.add(L[d])  # we still have the long list
@@ -1039,14 +1049,14 @@ class RankingSimilarity:
 
                 X[d] = X[d - 1] + overlap_incr
                 A[d] = 1.0 * X[d] / (d + 1)
-                rbo[d] = rbo[d - 1] + 1.0 * (1 - p) * (p**d) * A[d]
+                rbo[d] = rbo[d - 1] + 1.0 * (1 - p) * (p ** d) * A[d]
 
                 X_s = X[s - 1]  # this the last common overlap
                 # second term in first parenthesis of Eq. (32)
-                disjoint += 1.0 * (1 - p) * (p**d) * \
-                    (X_s * (d + 1 - s) / (d + 1) / s)
+                disjoint += 1.0 * (1 - p) * (p ** d) * \
+                            (X_s * (d + 1 - s) / (d + 1) / s)
                 ext_term = 1.0 * ((X[d] - X_s) / (d + 1) + X[s - 1] / s) * \
-                    p**(d + 1)  # last term in Eq. (32)
+                           p ** (d + 1)  # last term in Eq. (32)
 
         return self._bound_range(rbo[-1] + disjoint + ext_term)
 
@@ -1085,15 +1095,16 @@ class RankingSimilarity:
         else:
             sum_1 = 0
             for i in range(1, d):
-                sum_1 += 1.0 * p**(i) / i
-            top_w = 1 - p**(i) + 1.0 * (1 - p) / p * (i + 1) * \
-                (np.log(1.0 / (1 - p)) - sum_1)  # here i == d-1
+                sum_1 += 1.0 * p ** (i) / i
+            top_w = 1 - p ** (i) + 1.0 * (1 - p) / p * (i + 1) * \
+                    (np.log(1.0 / (1 - p)) - sum_1)  # here i == d-1
 
         if self.verbose:
             print("The first {} ranks have {:6.3%} of the weight of "
                   "the evaluation.".format(d, top_w))
 
         return self._bound_range(top_w)
+
 
 def split_numbers(max_number, chunk_size):
     lists = []
@@ -1102,10 +1113,12 @@ def split_numbers(max_number, chunk_size):
         lists.append(list(range(start, end)))
     return lists
 
+
 def pairwise_distances(x):
     # x should be two dimensional
     instances_norm = torch.sum(x ** 2, -1).reshape((-1, 1))
     return -2 * torch.mm(x, x.t()) + instances_norm + instances_norm.t()
+
 
 def GaussianKernelMatrix(x, sigma=1):
     pairwise_distances_ = pairwise_distances(x)

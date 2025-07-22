@@ -159,7 +159,7 @@ class SpaMV:
             raise ValueError("hidden_dim must be a positive integer")
         else:
             self.hidden_dim = hidden_dim
-        self.omics_names = ["omics_{}".format(i) for i in range(self.n_omics)] if omics_names is None else omics_names
+        self.omics_names = ["Omics_{}".format(i + 1) for i in range(self.n_omics)] if omics_names is None else omics_names
         if device:
             self.device = device
         else:
@@ -178,7 +178,6 @@ class SpaMV:
             raise ValueError("batch_size must be a positive integer")
         else:
             self.batch_size = batch_size
-        print(self.device)
         self.neighborhood_depth = neighborhood_depth
         self.neighborhood_embedding = neighborhood_embedding
 
@@ -364,7 +363,7 @@ class SpaMV:
                         [guide_trace.nodes["zs_" + self.omics_names[i]]["fn"].log_prob(guide_site["value"]) for i in
                          range(len(self.data_dims))])) * guide_site['scale']).sum()
                     elbo_particle += (model_site["log_prob_sum"] - entropy_term)
-                    omics_name = name.split("_")[1]
+                    omics_name = name[3:]
                     for on in self.omics_names:
                         if on != omics_name:
                             loss_hsic = self.HSIC(guide_site['fn'].mean,
@@ -491,11 +490,11 @@ class SpaMV:
         while merge:
             merge = False
             for topic_i in spot_topic.columns:
+                oi = 'Shared' if 'Shared' in topic_i else topic_i.split(' private', 1)[0]
                 for topic_j in spot_topic.columns:
-                    if spot_topic.columns.get_loc(topic_j) > spot_topic.columns.get_loc(topic_i) and topic_i.split(' ')[
-                        0] == topic_j.split(' ')[0]:
-                        on = topic_i.split(' ')[0]
-                        if on == 'Shared':
+                    oj = 'Shared' if 'Shared' in topic_j else topic_j.split(' private', 1)[0]
+                    if spot_topic.columns.get_loc(topic_j) > spot_topic.columns.get_loc(topic_i) and oi == oj:
+                        if oi == 'Shared':
                             sim = min([RankingSimilarity(
                                 feature_topic[self.omics_names[i]].nlargest(topks[i], topic_i).index.tolist(),
                                 feature_topic[self.omics_names[i]].nlargest(topks[i], topic_j).index.tolist()).rbo() for
@@ -503,9 +502,9 @@ class SpaMV:
                                        range(self.n_omics)])
                         else:
                             sim = RankingSimilarity(
-                                feature_topic[on].nlargest(topks[self.omics_names.index(on)],
+                                feature_topic[oi].nlargest(topks[self.omics_names.index(oi)],
                                                            topic_i).index.tolist(),
-                                feature_topic[on].nlargest(topks[self.omics_names.index(on)],
+                                feature_topic[oj].nlargest(topks[self.omics_names.index(oj)],
                                                            topic_j).index.tolist()).rbo()
                         if sim > threshold:
                             print('merge', topic_i, 'and', topic_j)
