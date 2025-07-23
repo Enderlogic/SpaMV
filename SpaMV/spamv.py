@@ -28,7 +28,7 @@ from .utils import adjacent_matrix_preprocessing, get_init_bg, log_mean_exp, Ran
     GaussianKernelMatrix
 
 from torch_geometric.data import Data
-from torch_geometric.loader import NeighborLoader
+from torch_geometric.loader import NeighborLoader, DataLoader
 
 
 def set_seed(seed):
@@ -212,6 +212,7 @@ class SpaMV:
         if self.early_stopping:
             self.early_stopper = EarlyStopper(patience=self.patience)
 
+        print("Starting training...")
         pbar = tqdm(range(self.max_epochs_stage1), position=0, leave=True)
 
         loss_fn = lambda model, guide: TraceMeanField_ELBO(num_particles=1).differentiable_loss(model, guide, [
@@ -498,8 +499,7 @@ class SpaMV:
                             sim = min([RankingSimilarity(
                                 feature_topic[self.omics_names[i]].nlargest(topks[i], topic_i).index.tolist(),
                                 feature_topic[self.omics_names[i]].nlargest(topks[i], topic_j).index.tolist()).rbo() for
-                                       i in
-                                       range(self.n_omics)])
+                                       i in range(self.n_omics)])
                         else:
                             sim = RankingSimilarity(
                                 feature_topic[oi].nlargest(topks[self.omics_names.index(oi)],

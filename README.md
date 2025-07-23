@@ -1,12 +1,31 @@
-This is a demo code for Spatial Multi-View representation learning algorithm. Before you run the code, please make sure that you have stored your data in the Data folder.
+# SpaMV: An interpretable spatial multi-omics data integration and dimension reduction algorithm
 
-To run the model for one time without interpretable mode, please use the following code
+# Installation
+
+1) Create and activate a conda environment with python 3.12
+
 ```
-python main.py
+conda env create spamv python==3.12
+conda activate spamv
 ```
 
-To run the model for one time with interpretable mode, please use the following code
+2) Before you install our package, please make sure you have installed the pyg-lib package.
+
 ```
-python main_interpretable.py
+# For CPU users
+pip install pyg-lib -f https://data.pyg.org/whl/torch-2.6.0+cpu.html
+# For GPU users
+pip install pyg-lib -f https://data.pyg.org/whl/torch-2.6.0+cuda118.html
 ```
 
+3) Then you could install our package as follows:
+
+```
+pip install spamv
+```
+
+# Tutorial
+
+We provide two jupyter notebooks (Tutorial_simulation.ipynb and Tutorial_realworld.ipynb) to reproduce the results in
+our paper. Before you run them, please make sure that you have downloaded the simulated data and/or real-world data from
+our Zenodo repositoy.

@@ -1,7 +1,6 @@
 import math
 from typing import List
 
-import numpy
 import pyro
 import torch
 import torch.nn.functional as F
@@ -10,7 +9,7 @@ from pyro.distributions import constraints, InverseGamma, Normal, LogNormal
 from pyro.nn import PyroModule, PyroParam
 from torch import Tensor
 from torch.distributions import HalfCauchy
-from torch_geometric.nn import GCN, GAT
+from torch_geometric.nn import GAT
 
 from .dist import NB, ZINB
 from .layers import GATEncoder, Decoder, Decoder_zi_logits

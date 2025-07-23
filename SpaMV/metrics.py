@@ -1,5 +1,4 @@
 import pandas
-import rbo
 from pandas import get_dummies
 from scipy.sparse import issparse
 from sklearn.neighbors import kneighbors_graph
@@ -7,6 +6,8 @@ import scanpy as sc
 import numpy as np
 from sklearn.metrics import adjusted_rand_score, mutual_info_score, normalized_mutual_info_score, \
     adjusted_mutual_info_score, homogeneity_score, v_measure_score
+
+from .utils import RankingSimilarity
 
 
 def compute_moranI(adata, key):
@@ -102,7 +103,7 @@ def compute_topic_diversity(beta, topk=20):
             if i != j:
                 li = beta.nlargest(topk, beta.columns[i]).index.tolist()
                 lj = beta.nlargest(topk, beta.columns[j]).index.tolist()
-                r = rbo.RankingSimilarity(li, lj).rbo()
+                r = RankingSimilarity(li, lj).rbo()
                 if 1 - r < TD[i]:
                     TD[i] = 1 - r
     return TD.mean()

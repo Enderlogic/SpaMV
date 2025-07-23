@@ -1,33 +1,30 @@
 import math
 import os.path
-import time
 import anndata
-import matplotlib.lines as mlines
+# import matplotlib.lines as mlines
 import numpy as np
-import pandas
 import pandas as pd
 import scanpy as sc
 import scipy
 import sklearn
 import torch
-from matplotlib import pyplot as plt, ticker
-from natsort import natsorted
+from matplotlib import pyplot as plt
+# from natsort import natsorted
 from numpy.linalg import norm
 from pandas import DataFrame
 from scanpy.plotting import embedding, spatial
-from scipy.sparse import csr_matrix, issparse
+from scipy.sparse import issparse
 from sklearn.neighbors import kneighbors_graph
 from torch_geometric.utils import coalesce, from_scipy_sparse_matrix
 from squidpy.pl import spatial_scatter
 from scipy.stats import pearsonr
 import seaborn as sns
-from sklearn.decomposition import PCA
-from scipy.sparse.csr import csr_matrix
-from scipy.sparse.csc import csc_matrix
+# from sklearn.decomposition import PCA
+# from scipy.sparse.csr import csr_matrix
+# from scipy.sparse.csc import csc_matrix
 from typing import List, Optional, Union
 from anndata import AnnData
 from tqdm import tqdm
-import rpy2
 
 
 def construct_graph_by_coordinate(cell_position, neighborhood_depth=3, device='cpu'):
@@ -199,97 +196,6 @@ def plot_embedding_results(adatas, omics_names, topic_abundance, feature_topics,
     plt.close()
 
 
-def replace_legend(legend_texts):
-    for legend_text in legend_texts:
-        if legend_text.get_text() == 'NA':
-            legend_text.set_text('other topics')
-
-
-def plot_clustering_results(adata, cluster_name, omics_names, folder_path, show=False, suffix=None):
-    max_width = max([len(item) for item in adata.obs[cluster_name].unique()])
-    max_height = adata.obs[cluster_name].nunique()
-    max_private_topics = 0
-    for omics_name in omics_names:
-        max_private_topics = max(max_private_topics,
-                                 len([item for item in adata.obs[cluster_name].unique() if omics_name in item]))
-    width = 5 + max_width * .12
-    height = 4 if max_height < max_private_topics + 1 else 4 + (max_height - max_private_topics - 1) * .2
-    adata.obs[cluster_name] = pandas.Categorical(values=adata.obs[cluster_name].values,
-                                                 categories=natsorted(adata.obs[cluster_name].unique()), ordered=True)
-    adata.obs[cluster_name] = adata.obs[cluster_name].cat.reorder_categories(
-        [item for item in natsorted(adata.obs[cluster_name].unique()) if 'Shared' not in item] + [item for item in
-                                                                                                  natsorted(adata.obs[
-                                                                                                                cluster_name].unique())
-                                                                                                  if 'Shared' in item])
-    import seaborn as sns
-    higher_class_palette = sns.color_palette("Set1", 3)
-    high_classes = ['Shared'] + omics_names
-    higher_class_colors = {i: color for i, color in zip(high_classes, higher_class_palette)}
-    subclass_colors = {}
-    for higher_class, color in higher_class_colors.items():
-        subclass_labels = [item for item in adata.obs[cluster_name].cat.categories if higher_class in item]
-        subclass_palette = sns.light_palette(color, n_colors=len(subclass_labels) + 2)
-        for label, subclass_color in zip(subclass_labels, subclass_palette[2:]):
-            subclass_colors[label] = subclass_color
-    adata.uns['colors'] = [subclass_colors[label] for label in adata.obs[cluster_name].cat.categories]
-    for group_name in ['All', 'Shared'] + omics_names:
-        if group_name == 'All':
-            groups = adata.obs[cluster_name].unique()
-        else:
-            groups = [item for item in adata.obs[cluster_name].unique() if group_name in item]
-        fig, ax = plt.subplots(figsize=(width, height))
-        sc.pl.embedding(adata, color=cluster_name, basis='spatial', vmax='p99', size=100,
-                        title=group_name + ' topics' if group_name in ['All',
-                                                                       'Shared'] else group_name + ' private topics',
-                        show=False, groups=groups, ax=ax, palette=adata.uns['colors'])
-        plt.plot([], [], label=' ' * (max_width + 19))
-        handles, labels = ax.get_legend_handles_labels()
-        handles[-1] = mlines.Line2D([], [], color='white')
-        plt.legend(handles, labels, loc='center left', bbox_to_anchor=(1, 0.48), frameon=False)
-        replace_legend(ax.get_legend().get_texts())
-        plt.tight_layout()
-        plt.savefig(
-            folder_path + group_name + '_topics.pdf' if suffix is None else folder_path + group_name + '_topics_' + suffix + '.pdf')
-        if show:
-            plt.show()
-
-
-def ST_preprocess(adata_st, normalize=True, log=True, prune=False, highly_variable_genes=True, n_top_genes=3000,
-                  pca=False, n_comps=50, scale=True):
-    adata = adata_st.copy()
-
-    adata.var['mt'] = np.logical_or(adata.var_names.str.startswith('MT-'), adata.var_names.str.startswith('mt-'))
-    adata.var['rb'] = adata.var_names.str.startswith(('RP', 'Rp', 'rp'))
-    sc.pp.calculate_qc_metrics(adata, qc_vars=['mt'], inplace=True)
-    mask_cell = adata.obs['pct_counts_mt'] < 100
-    mask_gene = np.logical_and(~adata.var['mt'], ~adata.var['rb'])
-    adata = adata[mask_cell, mask_gene]
-
-    sc.pp.filter_genes(adata, min_cells=10)
-    sc.pp.filter_cells(adata, min_genes=200)
-    if prune:
-        adata = adata[:, (adata.X > 1).sum(0) > adata.n_obs / 100]
-
-    if highly_variable_genes:
-        sc.pp.highly_variable_genes(adata, flavor='seurat_v3', n_top_genes=n_top_genes, subset=False)
-
-    if normalize:
-        sc.pp.normalize_total(adata, target_sum=1e4)
-    if log:
-        sc.pp.log1p(adata)
-
-    if pca:
-        sc.pp.pca(adata, n_comps=n_comps)
-
-    if scale:
-        sc.pp.scale(adata)
-
-    if highly_variable_genes:
-        return adata[:, adata.var.highly_variable]
-    else:
-        return adata
-
-
 def clr_normalize_each_cell(adata, inplace=True):
     """Normalize count vector for each cell, i.e. for each row of .X"""
 
@@ -437,14 +343,18 @@ def mclust_R(adata, num_cluster, used_obsm='emb_pca', add_key='SpaMV', random_se
 
 def pca(adata, use_reps=None, n_comps=10):
     """Dimension reduction with PCA algorithm"""
-    pca = PCA(n_components=n_comps, random_state=0)
+    # pca = PCA(n_components=n_comps, random_state=0)
     if use_reps is not None:
-        feat_pca = pca.fit_transform(adata.obsm[use_reps])
+        tmp = AnnData(adata.obsm[use_reps])
+        sc.pp.pca(tmp, n_comps=n_comps)
+        feat_pca = tmp.obsm['X_pca']
     else:
-        if isinstance(adata.X, csc_matrix) or isinstance(adata.X, csr_matrix):
-            feat_pca = pca.fit_transform(adata.X.toarray())
-        else:
-            feat_pca = pca.fit_transform(adata.X)
+        sc.pp.pca(adata, n_comps=n_comps)
+        feat_pca = adata.obsm['X_pca']
+        # if isinstance(adata.X, csc_matrix) or isinstance(adata.X, csr_matrix):
+            # feat_pca = pca.fit_transform(adata.X.toarray())
+        # else:
+            # feat_pca = pca.fit_transform(adata.X)
 
     return feat_pca
 
