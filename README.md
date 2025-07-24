@@ -9,16 +9,20 @@ conda env create spamv python==3.12
 conda activate spamv
 ```
 
-2) Before you install our package, please make sure you have installed the pyg-lib package.
+2) (Optional) If you want to apply our algorithm to large datasets (with more than 10,000 spots), please make sure you have
+   installed the pyg-lib package.
 
 ```
-# For CPU users
-pip install pyg-lib -f https://data.pyg.org/whl/torch-2.6.0+cpu.html
-# For GPU users
-pip install pyg-lib -f https://data.pyg.org/whl/torch-2.6.0+cuda118.html
+pip install pyg-lib -f https://data.pyg.org/whl/torch-${TORCH}+${CUDA}.html
 ```
 
-3) Then you could install our package as follows:
+where
+
+- `${TORCH}` should be replaced by either `1.13.0`, `2.0.0`, `2.1.0`, `2.2.0`, `2.3.0`, `2.4.0`, `2.5.0`, `2.6.0`, or
+  `2.7.0`
+- `${CUDA}` should be replaced by either `cpu`, `cu102`, `cu117`, `cu118`, `cu121`, `cu124`, `cu126`, or `cu128`
+
+3) Then you can install our package as follows:
 
 ```
 pip install spamv

@@ -63,6 +63,7 @@ def set_seed(seed):
     # Set environment variables for deterministic behavior
     os.environ['PYTHONHASHSEED'] = str(seed)
 
+
 def get_importance_trace(graph_type, max_plate_nesting, model, guide, args, detach=False):
     """
     Returns a single trace from the guide, which can optionally be detached,
@@ -101,13 +102,15 @@ def get_importance_trace(graph_type, max_plate_nesting, model, guide, args, deta
 
     return model_trace, guide_trace
 
+
 def softmax(x):
     e_x = np.exp(x - np.max(x))  # Subtract max for numerical stability
     return e_x / e_x.sum()
 
+
 class SpaMV:
     def __init__(self, adatas: List[AnnData], interpretable: bool, zp_dims: List[int] = None, zs_dim: int = None,
-                 weights: List[float] = None, betas: List[float] = None, recon_types: List[str] = None,
+                 weights: List[float] = None, alphas: List[float] = None, recon_types: List[str] = None,
                  omics_names: List[str] = None, device: torch.device = None, hidden_dim: int = None,
                  batch_size: int = None, heads: int = 1, neighborhood_depth: int = 2, neighborhood_embedding: int = 10,
                  random_seed: int = 0, max_epochs_stage1: int = 400, max_epochs_stage2: int = 400,
@@ -139,12 +142,12 @@ class SpaMV:
             raise ValueError("all elements in weights must be non-negative")
         else:
             self.weights = weights
-        if betas is None:
-            self.betas = [10 if interpretable else 1 for _ in range(self.n_omics)]
-        elif min(betas) < 0:
-            raise ValueError("all elements in betas must be non-negative")
+        if alphas is None:
+            self.alphas = [10 if interpretable else 1 for _ in range(self.n_omics)]
+        elif min(alphas) < 0:
+            raise ValueError("all elements in alphas must be non-negative")
         else:
-            self.betas = betas
+            self.alphas = alphas
         if recon_types is None:
             recon_types = ["nb" if interpretable else "gauss" for _ in range(self.n_omics)]
         else:
@@ -159,7 +162,8 @@ class SpaMV:
             raise ValueError("hidden_dim must be a positive integer")
         else:
             self.hidden_dim = hidden_dim
-        self.omics_names = ["Omics_{}".format(i + 1) for i in range(self.n_omics)] if omics_names is None else omics_names
+        self.omics_names = ["Omics_{}".format(i + 1) for i in
+                            range(self.n_omics)] if omics_names is None else omics_names
         if device:
             self.device = device
         else:
@@ -193,13 +197,12 @@ class SpaMV:
         self.threshold_background = threshold_background
         self.meaningful_dimensions = {}
 
-        data = [Data(
+        print("Building data and neighboring graphs...")
+        self.data = [Data(
             x=torch.tensor(np.ascontiguousarray(adatas[i].X.toarray() if issparse(adatas[i].X) else adatas[i].X),
                            device=self.device, dtype=torch.float),
             edge_index=adjacent_matrix_preprocessing(adatas[i], neighborhood_depth, neighborhood_embedding,
                                                      self.device)) for i in range(self.n_omics)]
-        self.loader = [NeighborLoader(data[i], num_neighbors=[10, 5] if interpretable else [10], batch_size=batch_size,
-                                      shuffle=False) for i in range(self.n_omics)]
         self.root_node_indices = split_numbers(self.n_obs, self.batch_size)
         self.init_bg_means = get_init_bg([torch.tensor(
             np.ascontiguousarray(adatas[i].X.toarray() if issparse(adatas[i].X) else adatas[i].X), device=self.device,
@@ -207,16 +210,23 @@ class SpaMV:
         self.model = spamv(self.data_dims, self.zs_dim, self.zp_dims, self.init_bg_means, self.weights, self.hidden_dim,
                            self.recon_types, heads, interpretable, self.device, self.omics_names)
 
+    def get_batch_data(self, batch_idx):
+        if self.n_obs == self.batch_size:
+            return self.data
+        else:
+            return [NeighborLoader(d, num_neighbors=[10, 5] if self.interpretable else [20], batch_size=self.batch_size,
+                                   input_nodes=self.root_node_indices[batch_idx], shuffle=False).data for d in
+                    self.data]
+
     def train(self):
         self.model = self.model.to(self.device)
         if self.early_stopping:
             self.early_stopper = EarlyStopper(patience=self.patience)
 
-        print("Starting training...")
         pbar = tqdm(range(self.max_epochs_stage1), position=0, leave=True)
 
-        loss_fn = lambda model, guide: TraceMeanField_ELBO(num_particles=1).differentiable_loss(model, guide, [
-            self.loader[i](self.root_node_indices[0]) for i in range(self.n_omics)])
+        loss_fn = lambda model, guide: TraceMeanField_ELBO(num_particles=1).differentiable_loss(model, guide,
+                                                                                                self.get_batch_data(0))
 
         with trace(param_only=True) as param_capture:
             loss = loss_fn(self.model.model, self.model.guide)
@@ -226,7 +236,7 @@ class SpaMV:
 
         for self.epoch_stage1 in pbar:
             for batch_idx in range(len(self.root_node_indices)):
-                batch_data = [self.loader[i](self.root_node_indices[batch_idx]) for i in range(self.n_omics)]
+                batch_data = self.get_batch_data(batch_idx)
                 if self.epoch_stage1 == self.pretrain_epoch:
                     self.early_stopper.min_training_loss = np.inf
                 if self.epoch_stage1 >= self.pretrain_epoch:
@@ -266,14 +276,14 @@ class SpaMV:
             optimizer_zs = Adam(params_zs, lr=self.learning_rate, betas=(.9, .999), weight_decay=0, eps=1e-8)
             pbar = tqdm(range(self.epoch_stage1, self.max_epochs_stage2 + self.epoch_stage1), position=0, leave=True)
             self.early_stopper.min_training_loss = np.inf
-            zps = self.model.get_private_latent([self.loader[i](range(self.n_obs)) for i in range(self.n_omics)], False)
+            zps = self.model.get_private_latent(self.data, False)
 
             scanpy.pp.neighbors(self.adatas[0], use_rep='spatial')
             for i in range(self.n_omics):
                 self.meaningful_dimensions['zp_' + self.omics_names[i]] = self.get_meaningful_dimensions(zps[i])
             for self.epoch_stage2 in pbar:
                 for batch_idx in range(len(self.root_node_indices)):
-                    batch_data = [self.loader[i](self.root_node_indices[batch_idx]) for i in range(self.n_omics)]
+                    batch_data = self.get_batch_data(batch_idx)
                     # train shared model
                     self.model.train()
                     optimizer_zs.zero_grad()
@@ -287,7 +297,7 @@ class SpaMV:
                     if self.early_stopper.early_stop(loss):
                         print("Early Stopping")
                         break
-            zs = self.model.get_shared_embedding([self.loader[i](range(self.n_obs)) for i in range(self.n_omics)])
+            zs = self.model.get_shared_embedding(self.data)
             self.meaningful_dimensions['zs'] = self.get_meaningful_dimensions(zs)
 
     def get_meaningful_dimensions(self, z):
@@ -317,7 +327,7 @@ class SpaMV:
 
     def get_elbo(self, datas):
         elbo_particle = 0
-        batch_size = datas[0].input_id.shape[0]
+        batch_size = datas[0].num_nodes
         model_trace, guide_trace = get_importance_trace('flat', torch.inf, scale(self.model.model, 1 / batch_size),
                                                         scale(self.model.guide, 1 / batch_size), datas, detach=False)
         for name, model_site in model_trace.nodes.items():
@@ -340,18 +350,18 @@ class SpaMV:
                         name = "from_" + self.omics_names[i] + "_to_" + self.omics_names[j]
                         if self.interpretable:
                             loss_measurement = output[name].std(0).sum() * self.data_dims[i] / 100 * self.weights[i] * \
-                                               self.betas[i]
+                                               self.alphas[i]
                         else:
-                            data_std = datas[j].x[:datas[0].input_id.shape[0]].std(0)
+                            data_std = datas[j].x[:datas[0].num_nodes].std(0)
                             loss_measurement = (output[name].std(
-                                0) * data_std / data_std.sum()).sum() * data_std.mean() * self.weights[i] * self.betas[
+                                0) * data_std / data_std.sum()).sum() * data_std.mean() * self.weights[i] * self.alphas[
                                                    i]
                         elbo_particle -= loss_measurement
         return -elbo_particle
 
     def get_elbo_shared(self, datas):
         elbo_particle = 0
-        batch_size = datas[0].input_id.shape[0]
+        batch_size = datas[0].num_nodes
         model_trace, guide_trace = get_importance_trace('flat', torch.inf, scale(self.model.model, 1 / batch_size),
                                                         scale(self.model.guide, 1 / batch_size), datas, detach=False)
         for name, model_site in model_trace.nodes.items():
@@ -370,12 +380,12 @@ class SpaMV:
                             loss_hsic = self.HSIC(guide_site['fn'].mean,
                                                   guide_trace.nodes["zp_" + on]["fn"].mean.detach()[:,
                                                   self.meaningful_dimensions['zp_' + on]]) * batch_size * np.sqrt(
-                                self.data_dims[self.omics_names.index(on)]) * self.betas[self.omics_names.index(on)]
+                                self.data_dims[self.omics_names.index(on)]) * self.alphas[self.omics_names.index(on)]
                             elbo_particle -= loss_hsic
         return -elbo_particle
 
     def get_measurement_loss(self, datas):
-        batch_size = datas[0].input_id.shape[0]
+        batch_size = datas[0].num_nodes
         zps = [z.detach() if self.interpretable else z.detach() for z in
                self.model.get_private_latent(datas, False)]
         output = self.measurement(zps)
@@ -411,11 +421,7 @@ class SpaMV:
         will be the shared embeddings, and the following 5 columns will be the private embeddings for data1, and the
         last 5 columns will be the private embeddings for data2.
         '''
-        z_mean = []
-        for batch_idx in range(len(self.root_node_indices)):
-            batch_data = [self.loader[i](self.root_node_indices[batch_idx]) for i in range(self.n_omics)]
-            z_mean.append(self.model.get_embedding(batch_data))
-        z_mean = torch.cat(z_mean, dim=0)
+        z_mean = self.model.get_embedding(self.data)
         if self.interpretable:
             columns_name = ["Shared topic {}".format(i + 1) for i in range(self.zs_dim)]
             for i in range(self.n_omics):
@@ -442,7 +448,7 @@ class SpaMV:
         private topics for modality 1 (RNA), and Topics 11-15 are private topics for modality 2 (Protein).
         '''
         if self.interpretable:
-            z_mean = self.model.get_embedding([self.loader[i](range(self.n_obs)) for i in range(self.n_omics)])
+            z_mean = self.model.get_embedding(self.data)
             columns_name = ["Shared topic {}".format(i + 1) for i in range(self.zs_dim)]
             for i in range(self.n_omics):
                 columns_name += [self.omics_names[i] + ' private topic {}'.format(j + 1) for j in

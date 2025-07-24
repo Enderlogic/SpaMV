@@ -1,29 +1,25 @@
 import math
 import os.path
+from typing import List, Optional, Union
+
 import anndata
-# import matplotlib.lines as mlines
 import numpy as np
 import pandas as pd
 import scanpy as sc
 import scipy
+import seaborn as sns
 import sklearn
 import torch
+from anndata import AnnData
 from matplotlib import pyplot as plt
-# from natsort import natsorted
 from numpy.linalg import norm
 from pandas import DataFrame
 from scanpy.plotting import embedding, spatial
 from scipy.sparse import issparse
-from sklearn.neighbors import kneighbors_graph
-from torch_geometric.utils import coalesce, from_scipy_sparse_matrix
-from squidpy.pl import spatial_scatter
 from scipy.stats import pearsonr
-import seaborn as sns
-# from sklearn.decomposition import PCA
-# from scipy.sparse.csr import csr_matrix
-# from scipy.sparse.csc import csc_matrix
-from typing import List, Optional, Union
-from anndata import AnnData
+from sklearn.neighbors import kneighbors_graph
+from squidpy.pl import spatial_scatter
+from torch_geometric.utils import coalesce, from_scipy_sparse_matrix
 from tqdm import tqdm
 
 
@@ -248,18 +244,17 @@ def lsi(adata: anndata.AnnData, n_components: int = 20, use_highly_variable: Opt
     adata.obsm[key_added] = X_lsi[:, 1:]
 
 
-def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool = True, hvg: bool = True,
-                  n_top_genes: int = 3000, normalization: bool = True, target_sum: float = 1e4, log1p: bool = True,
-                  scale: bool = False):
+def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool = True, min_cells=10, min_genes=200,
+                  hvg: bool = True, n_top_genes: int = 3000, normalization: bool = True, target_sum: float = 1e4,
+                  log1p: bool = True, scale: bool = False):
     '''
     # preprocess step for domain clustering
     '''
     # prune low quality features and spots
     if prune:
         for i in range(len(datasets)):
-            sc.pp.filter_genes(datasets[i], min_cells=round(datasets[i].n_obs / 100))
-            sc.pp.filter_cells(datasets[i], min_genes=round(datasets[i].n_vars / 100))
-            if any(substring.lower() in omics_names[i].lower() for substring in ['Transcriptomics', 'RNA', 'Gene']):
+            if any(substring.lower() in omics_names[i].lower() for substring in
+                   ['Transcriptomics', 'Transcriptome', 'RNA', 'Gene']):
                 datasets[i].var['mt'] = np.logical_or(datasets[i].var_names.str.startswith('MT-'),
                                                       datasets[i].var_names.str.startswith('mt-'))
                 datasets[i].var['rb'] = datasets[i].var_names.str.startswith(('RP', 'Rp', 'rp'))
@@ -267,6 +262,9 @@ def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool =
                 mask_cell = datasets[i].obs['pct_counts_mt'] < 100
                 mask_gene = np.logical_and(~datasets[i].var['mt'], ~datasets[i].var['rb'])
                 datasets[i] = datasets[i][mask_cell, mask_gene]
+            sc.pp.filter_genes(datasets[i], min_cells=min_cells)
+            if datasets[i].n_vars > 1000:
+                sc.pp.filter_cells(datasets[i], min_genes=min_genes)
     remained_spots = datasets[0].obs_names
     n_comps = min(50, datasets[0].n_vars - 1)
     for i in range(1, len(datasets)):
@@ -274,7 +272,8 @@ def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool =
         n_comps = min(n_comps, datasets[i].n_vars - 1)
     for i in range(len(datasets)):
         datasets[i] = datasets[i][remained_spots, :]
-        if any(substring.lower() in omics_names[i].lower() for substring in ['Transcriptomics', 'RNA', 'Gene']):
+        if any(substring.lower() in omics_names[i].lower() for substring in
+               ['Transcriptomics', 'Transcriptome', 'RNA', 'Gene']):
             if hvg:
                 sc.pp.highly_variable_genes(datasets[i], flavor='seurat_v3', n_top_genes=n_top_genes, subset=False)
             if normalization:
@@ -286,15 +285,17 @@ def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool =
             if scale:
                 sc.pp.scale(datasets[i])
             sc.pp.pca(datasets[i], n_comps=n_comps, key_added='embedding')
-        elif any(substring.lower() in omics_names[i].lower() for substring in ['Proteomics', 'ADT', 'Protein']):
+        elif any(substring.lower() in omics_names[i].lower() for substring in
+                 ['Proteomics', 'Proteome', 'ADT', 'Protein']):
             if normalization:
                 datasets[i] = clr_normalize_each_cell(datasets[i])
             if scale:
                 sc.pp.scale(datasets[i])
             sc.pp.pca(datasets[i], n_comps=n_comps, key_added='embedding')
-        elif any(substring.lower() in omics_names[i].lower() for substring in ['Epigenomics', 'peaks']):
+        elif any(substring.lower() in omics_names[i].lower() for substring in ['Epigenomics', 'Epigenome', 'peaks']):
             lsi(datasets[i], use_highly_variable=False, n_components=n_comps + 1, key_added='embedding')
-        elif any(substring.lower() in omics_names[i].lower() for substring in ['Metabolomics', 'Metabolite']):
+        elif any(substring.lower() in omics_names[i].lower() for substring in
+                 ['Metabolomics', 'Metabolome', 'Metabonomics', 'Metabonome']):
             if normalization:
                 sc.pp.normalize_total(datasets[i], target_sum=target_sum)
             if log1p:
@@ -307,7 +308,8 @@ def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool =
                 sc.pp.scale(datasets[i])
             sc.pp.pca(datasets[i], n_comps=n_comps, key_added='embedding')
         else:
-            raise Exception("To be completed for " + omics_names[i] + ".")
+            raise Exception("The preprocess step for " + omics_names[
+                i] + " has not been implemented. Please preprocess by your own approach.")
         datasets[i] = anndata.AnnData(datasets[i].obsm['embedding'], obs=datasets[i].obs, obsm=datasets[i].obsm,
                                       uns=datasets[i].uns)
     return datasets
@@ -325,6 +327,11 @@ def mclust_R(adata, num_cluster, used_obsm='emb_pca', add_key='SpaMV', random_se
 
     np.random.seed(random_seed)
     import rpy2.robjects as robjects
+    import rpy2.robjects.packages as rpackages
+    if not rpackages.isinstalled('mclust'):
+        utils = rpackages.importr('utils')
+        utils.chooseCRANmirror(ind=1)
+        utils.install_packages('mclust')
     robjects.r.library("mclust")
 
     import rpy2.robjects.numpy2ri
@@ -352,9 +359,9 @@ def pca(adata, use_reps=None, n_comps=10):
         sc.pp.pca(adata, n_comps=n_comps)
         feat_pca = adata.obsm['X_pca']
         # if isinstance(adata.X, csc_matrix) or isinstance(adata.X, csr_matrix):
-            # feat_pca = pca.fit_transform(adata.X.toarray())
+        # feat_pca = pca.fit_transform(adata.X.toarray())
         # else:
-            # feat_pca = pca.fit_transform(adata.X)
+        # feat_pca = pca.fit_transform(adata.X)
 
     return feat_pca
 

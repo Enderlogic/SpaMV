@@ -8,7 +8,6 @@ from torch.distributions import Gamma, constraints
 from torch.distributions import Poisson as PoissonTorch
 from torch.distributions.utils import broadcast_all, lazy_property, logits_to_probs, probs_to_logits
 
-from scvi import settings
 
 def log_zinb_positive(x: torch.Tensor, mu: torch.Tensor, theta: torch.Tensor, zi_probs: torch.Tensor,
                       eps: float = 1e-8) -> torch.Tensor:
@@ -46,7 +45,7 @@ def log_zinb_positive(x: torch.Tensor, mu: torch.Tensor, theta: torch.Tensor, zi
     mul_case_zero = torch.mul((x < eps).type(torch.float32), case_zero)
 
     case_non_zero = -softplus_pi + pi_theta_log + x * ((mu + eps).log() - log_theta_mu_eps) + (
-                x + theta).lgamma() - theta.lgamma() - (x + 1).lgamma()
+            x + theta).lgamma() - theta.lgamma() - (x + 1).lgamma()
     mul_case_non_zero = torch.mul((x > eps).type(torch.float32), case_non_zero)
 
     res = mul_case_zero + mul_case_non_zero
@@ -168,6 +167,5 @@ class ZINB(TorchDistribution):
         try:
             self._validate_sample(value)
         except ValueError:
-            warnings.warn("The value argument must be within the support of the distribution", UserWarning,
-                          stacklevel=settings.warnings_stacklevel)
+            warnings.warn("The value argument must be within the support of the distribution", UserWarning)
         return log_zinb_positive(value, self.mu, self.theta, self.zi_logits, eps=1e-08)

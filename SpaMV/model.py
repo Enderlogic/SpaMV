@@ -107,7 +107,7 @@ class spamv(PyroModule):
 
     def model(self, datas):
         pyro.module("spamv", self)
-        batch_size = datas[0].input_id.shape[0]
+        batch_size = datas[0].num_nodes
         sample_plate = pyro.plate("sample", batch_size)
         zss = []
         zps = []
@@ -187,7 +187,7 @@ class spamv(PyroModule):
                             raise NotImplementedError
 
     def guide(self, datas):
-        batch_size = datas[0].input_id.shape[0]
+        batch_size = datas[0].num_nodes
         sample_plate = pyro.plate("sample", batch_size)
         for i, data in zip(range(self.n_omics), datas):
             if self.interpretable:
@@ -220,7 +220,7 @@ class spamv(PyroModule):
                             zp_scale.clamp(min=-10, max=5) / 2).exp()).to_event(1))
 
     def get_embedding(self, datas, train_eval=False):
-        batch_size = datas[0].input_id.shape[0]
+        batch_size = datas[0].num_nodes
         if train_eval:
             self.train()
         else:
@@ -236,7 +236,7 @@ class spamv(PyroModule):
         return z_mean
 
     def get_private_latent(self, datas, train_eval=False):
-        batch_size = datas[0].input_id.shape[0]
+        batch_size = datas[0].num_nodes
         zp = []
         if train_eval:
             self.train()
@@ -250,7 +250,7 @@ class spamv(PyroModule):
         return zp
 
     def get_private_embedding(self, datas):
-        batch_size = datas[0].input_id.shape[0]
+        batch_size = datas[0].num_nodes
         zp = []
         for i, data in zip(range(self.n_omics), datas):
             if self.zp_dims[i] > 0:
@@ -259,7 +259,7 @@ class spamv(PyroModule):
         return zp
 
     def get_shared_embedding(self, datas):
-        batch_size = datas[0].input_id.shape[0]
+        batch_size = datas[0].num_nodes
         zs = torch.zeros((batch_size, self.zs_dim), device=self.device)
         for i, data in zip(range(self.n_omics), datas):
             zs += getattr(self, "zs_encoder_" + self.omics_names[i])(data.x, data.edge_index)[:batch_size].split(self.zs_dim, 1)[0] / self.n_omics
