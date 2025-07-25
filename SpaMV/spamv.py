@@ -115,7 +115,7 @@ class SpaMV:
                  batch_size: int = None, heads: int = 1, neighborhood_depth: int = 2, neighborhood_embedding: int = 10,
                  random_seed: int = 0, max_epochs_stage1: int = 400, max_epochs_stage2: int = 400,
                  learning_rate: float = None, early_stopping: bool = True, patience: int = 200,
-                 threshold_noise: int = .3, threshold_background: int = 1):
+                 threshold_noise: float = .3, threshold_background: float = 1):
         pyro.clear_param_store()
         set_seed(random_seed)
 

@@ -21,6 +21,7 @@ from sklearn.neighbors import kneighbors_graph
 from squidpy.pl import spatial_scatter
 from torch_geometric.utils import coalesce, from_scipy_sparse_matrix
 from tqdm import tqdm
+import squidpy
 
 
 def construct_graph_by_coordinate(cell_position, neighborhood_depth=3, device='cpu'):
@@ -136,7 +137,7 @@ def plot_embedding_results(adatas, omics_names, topic_abundance, feature_topics,
                               title=mrf + '\nHighest ranking ' + element_names[j] + '\nw.r.t. ' + topic_name)
                 else:
                     spatial(adatas[j], color=mrf, vmax='p99', cmap='coolwarm', show=False, ax=axes[1 + j, i],
-                            title=mrf + '\nMost relevant ' + element_names[j] + '\nw.r.t. ' + topic_name)
+                            title=mrf + '\nHighest ranking ' + element_names[j] + '\nw.r.t. ' + topic_name)
     for i in range(zs_dim):
         for j in range(n_omics + 1 if corresponding_features else 1):
             axes[j, i].set_xlabel('')  # Remove x-axis label
@@ -164,7 +165,7 @@ def plot_embedding_results(adatas, omics_names, topic_abundance, feature_topics,
                 else:
                     spatial(adatas[i], color=mrf, vmax='p99', cmap='coolwarm', show=False,
                             ax=axes[1 + n_omics + i * n_omics + 1, j],
-                            title=mrf + '\nMost relevant ' + element_names[i] + '\nw.r.t. ' + topic_name)
+                            title=mrf + '\nHighest ranking ' + element_names[i] + '\nw.r.t. ' + topic_name)
     for i in range(n_omics):
         for j in range(zp_dims[i]):
             if corresponding_features:
@@ -244,9 +245,9 @@ def lsi(adata: anndata.AnnData, n_components: int = 20, use_highly_variable: Opt
     adata.obsm[key_added] = X_lsi[:, 1:]
 
 
-def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool = True, min_cells=10, min_genes=200,
-                  hvg: bool = True, n_top_genes: int = 3000, normalization: bool = True, target_sum: float = 1e4,
-                  log1p: bool = True, scale: bool = False):
+def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool = True, min_cells: int = 10,
+                  min_genes: int = 200, hvg: bool = True, n_top_genes: int = 3000, normalization: bool = True,
+                  target_sum: float = 1e4, log1p: bool = True, scale: bool = False):
     '''
     # preprocess step for domain clustering
     '''
@@ -312,6 +313,47 @@ def preprocess_dc(datasets: List[AnnData], omics_names: List[str], prune: bool =
                 i] + " has not been implemented. Please preprocess by your own approach.")
         datasets[i] = anndata.AnnData(datasets[i].obsm['embedding'], obs=datasets[i].obs, obsm=datasets[i].obsm,
                                       uns=datasets[i].uns)
+    return datasets
+
+
+def preprocess_idr(datasets: List[AnnData], omics_names: List[str]):
+    obs_names = None
+    for i in range(len(datasets)):
+        datasets[i].var_names_make_unique()
+        datasets[i].X = datasets[i].X.astype(np.float32).toarray() if issparse(datasets[i].X) else datasets[i].X.astype(
+            np.float32)
+        sc.pp.filter_cells(datasets[i], min_genes=math.ceil(datasets[i].n_vars / 100))
+        obs_names = datasets[i].obs_names if obs_names is None else obs_names.intersection(datasets[i].obs_names)
+    for i in range(len(datasets)):
+        datasets[i] = datasets[i][obs_names]
+        sc.pp.filter_genes(datasets[i], min_cells=round(datasets[i].n_obs / 100))
+        if omics_names[i] == 'Transcriptome':
+            datasets[i] = datasets[i][:, (datasets[i].X > 1).sum(0) > datasets[i].n_obs / 100]
+            sc.pp.highly_variable_genes(datasets[i], subset=False, n_top_genes=1000, flavor='seurat_v3')
+            sc.pp.normalize_total(datasets[i])
+            sc.pp.log1p(datasets[i])
+            datasets[i] = datasets[i][:, datasets[i].var_names[datasets[i].var.highly_variable]]
+        elif omics_names[i] == 'Proteome':
+            datasets[i] = clr_normalize_each_cell(datasets[i])
+        elif omics_names[i] == 'Epigenome':
+            sc.pp.filter_genes(datasets[i], min_cells=round(datasets[i].n_obs / 100))
+            datasets[i].X = datasets[i].X - datasets[i].X.min(0)
+            sc.pp.highly_variable_genes(datasets[i], n_top_genes=1000, subset=True, flavor='seurat')
+        elif omics_names[i] == 'Metabolome':
+            # data[i] = data[i][:, (data[i].X > 1).sum(0) > data[i].n_obs / 100]
+            sc.pp.normalize_total(datasets[i])
+            sc.pp.log1p(datasets[i])
+            sc.pp.highly_variable_genes(datasets[i], n_top_genes=1000, subset=True, flavor='seurat')
+        else:
+            # sc.pp.log1p(datasets[i])
+            datasets[i] = datasets[i][:, ~datasets[i].var_names.str.startswith('Mir')]
+            sc.pp.filter_genes(datasets[i], min_cells=math.ceil(datasets[i].n_obs / 100))
+            squidpy.gr.spatial_neighbors(datasets[i])
+            squidpy.gr.spatial_autocorr(datasets[i], mode="moran", genes=datasets[i].var_names, n_perms=100, n_jobs=1)
+            datasets[i] = datasets[i][:, datasets[i].uns['moranI'].index[datasets[i].uns['moranI']['pval_norm'] < .05]]
+            sc.pp.highly_variable_genes(datasets[i], n_top_genes=1000, subset=False, flavor='seurat')
+            datasets[i].var.loc[['Hand2', 'Gfi1b', 'Wwp2', 'Sox2', 'Hoxc4', 'Wnt7b', 'Sall1', 'Dtx4', 'Nprl3', 'Nfe2'], 'highly_variable'] = True
+            datasets[i] = datasets[i][:, datasets[i].var.highly_variable]
     return datasets
 
 
