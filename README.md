@@ -1,6 +1,6 @@
-# SpaMV: An interpretable spatial multi-omics data integration and dimension reduction algorithm
+## SpaMV: An interpretable spatial multi-omics data integration and dimension reduction algorithm
 
-# Installation
+## Installation
 
 1) Create and activate a conda environment with python 3.12
 
@@ -28,7 +28,10 @@ where
 pip install spamv
 ```
 
-# Tutorial
+## Getting started
+See [Documentation and Tutorials](https://spamv-tutorials.readthedocs.io/en/latest/index.html).
+
+## Tutorial
 
 We provide two jupyter notebooks (Tutorial_simulation.ipynb and Tutorial_realworld.ipynb) to reproduce the results in
 our paper. Before you run them, please make sure that you have downloaded the simulated data and/or real-world data from
