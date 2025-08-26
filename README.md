@@ -5,7 +5,7 @@
 1) Create and activate a conda environment with python 3.12
 
 ```
-conda env create spamv python==3.12
+conda create -n spamv python==3.12
 conda activate spamv
 ```
 
