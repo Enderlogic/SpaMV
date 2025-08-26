@@ -2,10 +2,10 @@
 
 ## Installation
 
-1) Create and activate a conda environment with python 3.12
+1) Create and activate a conda environment with python 3.12 and r-base
 
 ```
-conda create -n spamv python==3.12
+conda create -n spamv python==3.12 r-base
 conda activate spamv
 ```
 
