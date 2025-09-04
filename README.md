@@ -2,7 +2,7 @@
 
 ## Installation
 
-1) Create and activate a conda environment with python 3.12 and r-base
+1) Create and activate a conda environment with Python 3.12 and R-base
 
 ```
 conda create -n spamv python==3.12 r-base
@@ -33,6 +33,6 @@ See [Documentation and Tutorials](https://spamv-tutorials.readthedocs.io/en/late
 
 ## Tutorial
 
-We provide two jupyter notebooks (Tutorial_simulation.ipynb and Tutorial_realworld.ipynb) to reproduce the results in
+We provide two Jupyter notebooks (Tutorial_simulation.ipynb and Tutorial_realworld.ipynb) to reproduce the results in
 our paper. Before you run them, please make sure that you have downloaded the simulated data and/or real-world data from
-our Zenodo repositoy.
+our Zenodo repository.
