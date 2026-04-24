@@ -34,7 +34,9 @@ unzip Data.zip
 
 ### 4. Run tutorial
 ```bash
+# to reproduce our results on simulated datasets
 python Tutorial_simulation.py
+# to reproduce our results on realworld datasets
 python Tutorial_realworld.py
 ```
 
