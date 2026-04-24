@@ -69,16 +69,6 @@ pip install spamv
 ```
 ---
 
-## 📁 Repository Structure
-
-SpaMV/  
-├── Data/                        # Datasets  
-├── SpaMV/                       # Core implementation  
-├── Tutorial_simulation.ipynb    # Simulation experiments  
-├── Tutorial_realworld.ipynb     # Real-world experiments  
-└── README.md
----
-
 ## 📊 Data
 
 All datasets used in this project are publicly available:  
@@ -97,6 +87,4 @@ https://spamv-tutorials.readthedocs.io/
 ---
 
 ## 📜 License
-
 This project is licensed under the MIT License.
----
